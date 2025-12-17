@@ -33,10 +33,11 @@ git clone https://gitlab.x-toolz.com/X-ToolZ/xfish-lite.git ~/xfish-lite && sour
 
 | Command | Description |
 |---------|-------------|
-| `xfish.lite.setup` | Symlink tmux configs to `~/.tmux.conf` and `~/.tmux_admin.conf` |
+| `xfish.lite.setup` | Symlink tmux configs and `__xfish_init` function |
 | `xfish.lite.tmux` | Start/attach to tmux session |
 | `xfish.lite.reload` | Reload xfish-lite without restarting shell |
 | `xfish.lite.pull` | Self-update to latest version |
+| `__xfish_init` | Init function (available after setup, for tmux/terminal init commands) |
 
 ## Auto-start tmux
 

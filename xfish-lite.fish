@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.34
+# xFish Lite v3.35
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://gitlab.x-toolz.com/X-ToolZ/xfish-lite
@@ -16,7 +16,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.34
+set -g XFISH_LITE_VERSION 3.35
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -360,7 +360,15 @@ function xfish.lite.setup
 		_xfish.echo "~/.tmux_admin.conf already symlinked"
 	end
 
-	_xfish.echo.green "tmux setup complete!"
+	# Symlink init function
+	mkdir -p ~/.config/fish/functions
+	if not test -L ~/.config/fish/functions/__xfish_init.fish
+		ln -sv $lite_base/__xfish_init.fish ~/.config/fish/functions/
+	else
+		_xfish.echo "__xfish_init.fish already symlinked"
+	end
+
+	_xfish.echo.green "Setup complete!"
 end
 
 # Reload
