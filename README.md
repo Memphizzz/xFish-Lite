@@ -41,11 +41,10 @@ git clone https://gitlab.x-toolz.com/X-ToolZ/xfish-lite.git ~/xfish-lite && sour
 
 ## Auto-start tmux
 
-Set `XFISH_LITE_TMUX` before sourcing to auto-attach:
+Use `--exec-tmux` with the init function (e.g., in SSH InitCommand):
 
 ```fish
-set -gx XFISH_LITE_TMUX 1
-source ~/xfish-lite/xfish-lite.fish
+__xfish_init --exec-tmux
 ```
 
 ## Update
