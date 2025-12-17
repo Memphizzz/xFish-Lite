@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.38
+# xFish Lite v3.39
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://gitlab.x-toolz.com/X-ToolZ/xfish-lite
@@ -16,7 +16,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.38
+set -g XFISH_LITE_VERSION 3.39
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -435,8 +435,18 @@ if set -q XFISH_LITE_TMUX
 end
 
 # Startup banner
-set -l _lolcat (type -q lolcat; and echo lolcat; or test -x /usr/games/lolcat; and echo /usr/games/lolcat)
-set -l _figlet (type -q figlet; and echo figlet; or test -x /usr/games/figlet; and echo /usr/games/figlet)
+set -l _lolcat
+set -l _figlet
+if type -q lolcat
+	set _lolcat lolcat
+else if test -x /usr/games/lolcat
+	set _lolcat /usr/games/lolcat
+end
+if type -q figlet
+	set _figlet figlet
+else if test -x /usr/games/figlet
+	set _figlet /usr/games/figlet
+end
 if test -n "$_figlet"; and test -n "$_lolcat"
 	$_figlet "xFish Lite v$XFISH_LITE_VERSION" | $_lolcat
 else
