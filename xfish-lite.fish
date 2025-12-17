@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.33
+# xFish Lite v3.34
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://gitlab.x-toolz.com/X-ToolZ/xfish-lite
@@ -16,7 +16,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.33
+set -g XFISH_LITE_VERSION 3.34
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -363,6 +363,12 @@ function xfish.lite.setup
 	_xfish.echo.green "tmux setup complete!"
 end
 
+# Reload
+function xfish.lite.reload
+	_xfish.echo.blue "Reloading.."
+	source (status filename)
+end
+
 # Self-update
 function xfish.lite.pull
 	set -l repo_url "https://gitlab.x-toolz.com/X-ToolZ/xfish-lite/-/raw/master/xfish-lite.fish"
@@ -390,7 +396,8 @@ function xfish.lite.pull
 	if test "$confirm" = 'y' -o "$confirm" = 'Y'
 		_xfish.echo.blue "Downloading.."
 		if curl -sf $repo_url -o $self
-			_xfish.echo.green "Updated to $remote_ver! Restart your shell to apply."
+			_xfish.echo.green "Updated to $remote_ver!"
+			xfish.lite.reload
 		else
 			_xfish.echo.red "Download failed!"
 			return 1
