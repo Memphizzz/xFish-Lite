@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.35
+# xFish Lite v3.36
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://gitlab.x-toolz.com/X-ToolZ/xfish-lite
@@ -16,7 +16,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.35
+set -g XFISH_LITE_VERSION 3.36
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -417,6 +417,12 @@ end
 set -g _xfish_initEcho 1
 _xfish.aliases.load
 umask 022
+
+# Auto-setup on first run
+if not test -L ~/.config/fish/functions/__xfish_init.fish
+	_xfish.echo.yellow "First run detected, running setup.."
+	xfish.lite.setup
+end
 
 # Auto-attach to tmux if requested
 if set -q XFISH_LITE_TMUX
