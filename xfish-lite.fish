@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.41
+# xFish Lite v3.42
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://gitlab.x-toolz.com/X-ToolZ/xfish-lite
@@ -16,7 +16,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.41
+set -g XFISH_LITE_VERSION 3.42
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -429,8 +429,8 @@ if not test -L ~/.config/fish/functions/__xfish_init.fish
 	xfish.lite.setup
 end
 
-# Auto-attach to tmux if requested (via env var or --exec-tmux arg)
-if set -q XFISH_LITE_TMUX; or contains -- --exec-tmux $argv
+# Auto-attach to tmux if requested
+if contains -- --exec-tmux $argv
 	xfish.lite.tmux
 end
 
