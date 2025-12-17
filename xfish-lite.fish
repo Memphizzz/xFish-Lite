@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.37
+# xFish Lite v3.38
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://gitlab.x-toolz.com/X-ToolZ/xfish-lite
@@ -16,7 +16,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.37
+set -g XFISH_LITE_VERSION 3.38
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -348,16 +348,20 @@ function xfish.lite.setup
 		_xfish.echo "~/.tmux.conf already symlinked"
 	end
 
-	# Backup and symlink tmux_admin.conf
-	if test -e ~/.tmux_admin.conf; and not test -L ~/.tmux_admin.conf
-		_xfish.echo.yellow "Backing up existing ~/.tmux_admin.conf"
-		mv ~/.tmux_admin.conf ~/.tmux_admin.conf.bak
-	end
+	# Optionally symlink tmux_admin.conf
+	_xfish.echo.yellow "Enable admin tmux layout? [y/N] "
+	read _admin
+	if test "$_admin" = 'y' -o "$_admin" = 'Y'
+		if test -e ~/.tmux_admin.conf; and not test -L ~/.tmux_admin.conf
+			_xfish.echo.yellow "Backing up existing ~/.tmux_admin.conf"
+			mv ~/.tmux_admin.conf ~/.tmux_admin.conf.bak
+		end
 
-	if not test -L ~/.tmux_admin.conf
-		ln -sv $lite_base/xfish_tmux_admin.conf ~/.tmux_admin.conf
-	else
-		_xfish.echo "~/.tmux_admin.conf already symlinked"
+		if not test -L ~/.tmux_admin.conf
+			ln -sv $lite_base/xfish_tmux_admin.conf ~/.tmux_admin.conf
+		else
+			_xfish.echo "~/.tmux_admin.conf already symlinked"
+		end
 	end
 
 	# Symlink init function
@@ -369,6 +373,7 @@ function xfish.lite.setup
 	end
 
 	_xfish.echo.green "Setup complete!"
+	_xfish.echo "Tip: Install figlet and lolcat for a fancy startup banner."
 end
 
 # Reload
@@ -430,8 +435,10 @@ if set -q XFISH_LITE_TMUX
 end
 
 # Startup banner
-if type -q figlet; and type -q lolcat
-	figlet "xFish Lite v$XFISH_LITE_VERSION" | lolcat
+set -l _lolcat (type -q lolcat; and echo lolcat; or test -x /usr/games/lolcat; and echo /usr/games/lolcat)
+set -l _figlet (type -q figlet; and echo figlet; or test -x /usr/games/figlet; and echo /usr/games/figlet)
+if test -n "$_figlet"; and test -n "$_lolcat"
+	$_figlet "xFish Lite v$XFISH_LITE_VERSION" | $_lolcat
 else
 	_xfish.echo.green "xFish Lite v$XFISH_LITE_VERSION loaded on "(hostname)".."
 end
