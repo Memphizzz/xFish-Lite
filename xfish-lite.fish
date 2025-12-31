@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.44
+# xFish Lite v3.45
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://gitlab.x-toolz.com/X-ToolZ/xfish-lite
@@ -13,10 +13,14 @@
 # Update:
 #   xfish.lite.pull
 #
+# Local customizations:
+#   Create xfish-lite-local.fish in the same directory for custom
+#   functions/aliases. This file is sourced on start and not overwritten.
+#
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.44
+set -g XFISH_LITE_VERSION 3.45
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -106,8 +110,6 @@ function throw_new_NotImplementedException
 end
 
 # --- lib/platform.fish ---
-# exit code or return value 0 is success
-
 function IsTmux
 	if test -z $TMUX
 		return 1
@@ -301,6 +303,16 @@ function _xfish.aliases.load
 	end
 end
 
+function _ssh
+	set -l session (tmux display-message -p '#S')
+	tmux new-window -n "$argv[1]" -a -t $session env SSH_AUTH_SOCK=$SSH_AUTH_SOCK SSH_AGENT_PID=$SSH_AGENT_PID (string split ' ' $argv[2..99])
+end
+
+function _ssh2
+	set -l session (tmux display-message -p '#S')
+	tmux new-window -n "$argv[1]" -a -t $session $argv[2..99]
+end
+
 
 # Theme settings
 set -g fish_prompt_pwd_dir_length 0
@@ -418,21 +430,40 @@ function xfish.lite.pull
 	end
 end
 
-# SSH helper functions
-function _ssh
-	set -l session (tmux display-message -p '#S')
-	tmux new-window -n "$argv[1]" -a -t $session env SSH_AUTH_SOCK=$SSH_AUTH_SOCK SSH_AGENT_PID=$SSH_AGENT_PID (string split ' ' $argv[2..99])
-end
-
-function _ssh2
-	set -l session (tmux display-message -p '#S')
-	tmux new-window -n "$argv[1]" -a -t $session $argv[2..99]
-end
-
 # Load
 set -g _xfish_initEcho 1
 _xfish.aliases.load
 umask 022
+
+# Source local customizations (not overwritten by updates)
+set -l _lite_local (dirname (status filename))/xfish-lite-local.fish
+if not test -e $_lite_local
+	echo '# xFish Lite - Local Customizations
+# This file is sourced on startup and not overwritten by updates.
+# Add your custom functions, aliases, and settings here.
+
+# Example: Conditional alias (only if tool is installed)
+# if type -q btop
+# 	alias top btop
+# end
+
+# Example: Custom function
+# function myserver
+# 	_ssh "MyServer" "ssh user@myserver.com"
+# end
+
+# Example: SSH with init command (runs command on connect)
+# set -l InitCommand "cd /var/log && exec fish"
+# function myserver.logs
+# 	_ssh "MyServer" "ssh -t user@myserver.com $InitCommand"
+# end
+
+# Example: Environment variable
+# set -gx EDITOR vim
+' > $_lite_local
+	_xfish.echo.green "Created $_lite_local for local customizations"
+end
+source $_lite_local
 
 # Auto-setup on first run
 if not test -L ~/.config/fish/functions/__xfish_init.fish
