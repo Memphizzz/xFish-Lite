@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.45
+# xFish Lite v3.46
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://gitlab.x-toolz.com/X-ToolZ/xfish-lite
@@ -20,7 +20,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.45
+set -g XFISH_LITE_VERSION 3.46
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -442,20 +442,22 @@ if not test -e $_lite_local
 # This file is sourced on startup and not overwritten by updates.
 # Add your custom functions, aliases, and settings here.
 
+# Default init command for SSH connections (starts xfish-lite with tmux)
+set -g InitCommand "__xfish_init --exec-tmux"
+
 # Example: Conditional alias (only if tool is installed)
 # if type -q btop
 # 	alias top btop
 # end
 
-# Example: Custom function
+# Example: Custom SSH function
 # function myserver
-# 	_ssh "MyServer" "ssh user@myserver.com"
+# 	_ssh "MyServer" "ssh -t user@myserver.com $InitCommand"
 # end
 
-# Example: SSH with init command (runs command on connect)
-# set -l InitCommand "cd /var/log && exec fish"
+# Example: SSH with custom init command
 # function myserver.logs
-# 	_ssh "MyServer" "ssh -t user@myserver.com $InitCommand"
+# 	_ssh "MyServer" "ssh -t user@myserver.com 'cd /var/log && exec fish'"
 # end
 
 # Example: Environment variable
