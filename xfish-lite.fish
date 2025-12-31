@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.43
+# xFish Lite v3.44
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://gitlab.x-toolz.com/X-ToolZ/xfish-lite
@@ -16,7 +16,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.43
+set -g XFISH_LITE_VERSION 3.44
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -416,6 +416,17 @@ function xfish.lite.pull
 			return 1
 		end
 	end
+end
+
+# SSH helper functions
+function _ssh
+	set -l session (tmux display-message -p '#S')
+	tmux new-window -n "$argv[1]" -a -t $session env SSH_AUTH_SOCK=$SSH_AUTH_SOCK SSH_AGENT_PID=$SSH_AGENT_PID (string split ' ' $argv[2..99])
+end
+
+function _ssh2
+	set -l session (tmux display-message -p '#S')
+	tmux new-window -n "$argv[1]" -a -t $session $argv[2..99]
 end
 
 # Load
