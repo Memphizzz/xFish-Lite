@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.46
+# xFish Lite v3.47
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://gitlab.x-toolz.com/X-ToolZ/xfish-lite
@@ -20,7 +20,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.46
+set -g XFISH_LITE_VERSION 3.47
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -344,7 +344,7 @@ end
 
 # Setup tmux configs
 function xfish.lite.setup
-	set -l lite_base (dirname (status filename))
+	set -l lite_base (dirname (realpath (status filename)))
 
 	_xfish.echo.blue "Setting up tmux configuration.."
 
@@ -436,7 +436,7 @@ _xfish.aliases.load
 umask 022
 
 # Source local customizations (not overwritten by updates)
-set -l _lite_local (dirname (status filename))/xfish-lite-local.fish
+set -l _lite_local (dirname (realpath (status filename)))/xfish-lite-local.fish
 if not test -e $_lite_local
 	echo '# xFish Lite - Local Customizations
 # This file is sourced on startup and not overwritten by updates.
