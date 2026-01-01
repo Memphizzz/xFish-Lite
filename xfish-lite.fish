@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.47
+# xFish Lite v3.48
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://gitlab.x-toolz.com/X-ToolZ/xfish-lite
@@ -20,7 +20,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.47
+set -g XFISH_LITE_VERSION 3.48
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -455,9 +455,9 @@ set -g InitCommand "__xfish_init --exec-tmux"
 # 	_ssh "MyServer" "ssh -t user@myserver.com $InitCommand"
 # end
 
-# Example: SSH with custom init command
+# Example: SSH with custom working directory
 # function myserver.logs
-# 	_ssh "MyServer" "ssh -t user@myserver.com 'cd /var/log && exec fish'"
+# 	_ssh "Logs" "ssh -t user@myserver.com"
 # end
 
 # Example: Environment variable
