@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.50
+# xFish Lite v3.51
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://gitlab.x-toolz.com/X-ToolZ/xfish-lite
@@ -20,7 +20,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.50
+set -g XFISH_LITE_VERSION 3.51
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -106,7 +106,7 @@ function _xfish.echo.debug -a text
 end
 
 function throw_new_NotImplementedException
-	_xfish.echo.red 'throw new NotImplementedException()'
+	_xfish.echo.red 'The method or operation is not implemented.'
 end
 
 # --- lib/platform.fish ---
@@ -488,6 +488,11 @@ function xfish.lite.setup
 	# Nano syntax highlighting
 	if _xfish.ask "Setup nano syntax highlighting?"
 		xfish.installers.nano
+	end
+
+	# Fisher + bobthefish theme
+	if _xfish.ask "Install Fisher and bobthefish theme?"
+		xfish.installers.fishtools
 	end
 
 	_xfish.echo.green "Setup complete!"
