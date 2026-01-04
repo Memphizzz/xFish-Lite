@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.49
+# xFish Lite v3.50
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://gitlab.x-toolz.com/X-ToolZ/xfish-lite
@@ -20,7 +20,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.49
+set -g XFISH_LITE_VERSION 3.50
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -376,7 +376,7 @@ function xfish.installers.fishtools
 	_xfish.echo ""
 	_xfish.echo.yellow "Note: This will download and execute scripts from the internet."
 
-	if not _xfish_ask "Do you want to continue with the installation?"
+	if not _xfish.ask "Do you want to continue with the installation?"
 		_xfish.echo "Installation cancelled."
 		return
 	end
@@ -418,8 +418,6 @@ function xservice
 	end
 end
 
-
-# Theme settings
 set -g fish_prompt_pwd_dir_length 0
 set -g theme_color_scheme dark
 set -g theme_display_vi no
