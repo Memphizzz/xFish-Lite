@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.51
+# xFish Lite v3.52
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://gitlab.x-toolz.com/X-ToolZ/xfish-lite
@@ -20,7 +20,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.51
+set -g XFISH_LITE_VERSION 3.52
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -215,7 +215,9 @@ end
 # --- lib/aliases.fish ---
 function _xfish.aliases.load
 	_xfish.init.echo 'B' "Setting aliases.."
-	alias grep='rg -i --color=always'
+	if type -q rg
+		alias grep='rg -i --color=always'
+	end
 	alias dir='ls --color=always --format=vertical'
 	alias vdir='ls --color=always --format=long'
 	alias ll='ls -lah --color=always --group-directories-first'
