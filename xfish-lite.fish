@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.48
+# xFish Lite v3.49
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://gitlab.x-toolz.com/X-ToolZ/xfish-lite
@@ -20,7 +20,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.48
+set -g XFISH_LITE_VERSION 3.49
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -179,6 +179,39 @@ function DirectoryExists -a path
 	end
 end
 
+# --- lib/prompts.fish ---
+function _xfish.confirm -a question
+	_xfish.echo.yellow $question
+	read -p "set_color red; echo -n \"Do you want to continue? [y/N] \"; set_color normal" _xfish_continue
+
+	if test $_xfish_continue = 'Y' -o $_xfish_continue = 'y' -o $_xfish_continue = 'yes' -o $_xfish_continue = 'YES'
+		return 0
+	else
+		return 1
+	end
+end
+
+function _xfish.ask -a question
+	read -p "set_color yellow; echo -n \"$_xfish_prefix $question [y/N] \"; set_color normal" _xfish_continue
+
+	if test $_xfish_continue = 'Y' -o $_xfish_continue = 'y' -o $_xfish_continue = 'yes' -o $_xfish_continue = 'YES'
+		return 0
+	else
+		return 1
+	end
+end
+
+function _xfish.ask.output
+	read -p "set_color yellow; echo -n \"$_xfish_prefix Show error log? [y/N] \"; set_color normal" _xfish_continue
+
+	if test $_xfish_continue = 'Y' -o $_xfish_continue = 'y' -o $_xfish_continue = 'yes' -o $_xfish_continue = 'YES'
+		cat $_xfish_output
+		return 0
+	else
+		return 1
+	end
+end
+
 # --- lib/aliases.fish ---
 function _xfish.aliases.load
 	_xfish.init.echo 'B' "Setting aliases.."
@@ -313,6 +346,78 @@ function _ssh2
 	tmux new-window -n "$argv[1]" -a -t $session $argv[2..99]
 end
 
+function xfish.installers.nano
+	if test -d ~/.nano
+		_xfish.echo "Nano syntax highlighting already configured, skipping.."
+		return 0
+	end
+
+	mkdir -p ~/.nano
+	if not curl -sL -o ~/.nano/fish.nanorc https://raw.githubusercontent.com/scopatz/nanorc/master/fish.nanorc
+		_xfish.echo.red "Failed to download fish.nanorc!"
+		return 1
+	end
+
+	# Add includes to .nanorc if not present
+	if not test -e ~/.nanorc; or not grep -q 'include "/usr/share/nano/\*.nanorc"' ~/.nanorc 2>/dev/null
+		echo 'include "/usr/share/nano/*.nanorc"' >> ~/.nanorc
+	end
+	if not grep -q 'include "~/.nano/fish.nanorc"' ~/.nanorc 2>/dev/null
+		echo 'include "~/.nano/fish.nanorc"' >> ~/.nanorc
+	end
+
+	_xfish.echo.green "Nano syntax highlighting configured!"
+end
+
+function xfish.installers.fishtools
+	_xfish.echo.blue "This will install the following Fish shell tools:"
+	_xfish.echo "  - Fisher (Fish package manager)"
+	_xfish.echo "  - bobthefish theme (xFish recommended theme)"
+	_xfish.echo ""
+	_xfish.echo.yellow "Note: This will download and execute scripts from the internet."
+
+	if not _xfish_ask "Do you want to continue with the installation?"
+		_xfish.echo "Installation cancelled."
+		return
+	end
+
+	curl -sL https://git.io/fisher | source && fisher install jorgebucaran/fisher oh-my-fish/theme-bobthefish
+end
+
+
+function xservice
+	if IsLinux
+		switch $argv[2]
+			case 'u' 'up' 'start'
+				_xfish.echo.blue "Starting Service '$argv[1]'.."
+				sudo systemctl start $argv[1]
+				sudo systemctl status $argv[1]
+			case 'd' 'down' 'stop'
+				_xfish.echo.blue "Stopping Service '$argv[1]'.."
+				sudo systemctl stop $argv[1]
+			case 'r' 'reload'
+				_xfish.echo.blue "Reloading Service '$argv[1]'.."
+				sudo systemctl reload $argv[1]
+			case 'rs' 'restart'
+				_xfish.echo.blue "Restarting Service '$argv[1]'.."
+				sudo systemctl restart $argv[1]
+				sudo systemctl status $argv[1]
+			case 's' 'status'
+				sudo systemctl status $argv[1]
+			case 'enable'
+				_xfish.echo.blue "Enabling Service '$argv[1]'.."
+				sudo systemctl enable $argv[1]
+			case 'disable'
+				_xfish.echo.blue "Disabling Service '$argv[1]'.."
+				sudo systemctl disable $argv[1]
+			case '*'
+				_xfish.echo.red "Unknown command."
+		end
+	else
+		throw_new_NotImplementedException
+	end
+end
+
 
 # Theme settings
 set -g fish_prompt_pwd_dir_length 0
@@ -361,9 +466,7 @@ function xfish.lite.setup
 	end
 
 	# Optionally symlink tmux_admin.conf
-	_xfish.echo.yellow "Enable admin tmux layout? [y/N] "
-	read _admin
-	if test "$_admin" = 'y' -o "$_admin" = 'Y'
+	if _xfish.ask "Enable admin tmux layout?"
 		if test -e ~/.tmux_admin.conf; and not test -L ~/.tmux_admin.conf
 			_xfish.echo.yellow "Backing up existing ~/.tmux_admin.conf"
 			mv ~/.tmux_admin.conf ~/.tmux_admin.conf.bak
@@ -382,6 +485,11 @@ function xfish.lite.setup
 		ln -sv $lite_base/__xfish_init.fish ~/.config/fish/functions/
 	else
 		_xfish.echo "__xfish_init.fish already symlinked"
+	end
+
+	# Nano syntax highlighting
+	if _xfish.ask "Setup nano syntax highlighting?"
+		xfish.installers.nano
 	end
 
 	_xfish.echo.green "Setup complete!"
