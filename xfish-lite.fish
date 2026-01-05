@@ -1,8 +1,8 @@
 #
-# xFish Lite v3.52
+# xFish Lite v3.53
 #
 # Minimal xFish for Docker containers and lightweight environments
-# https://gitlab.x-toolz.com/X-ToolZ/xfish-lite
+# https://github.com/Memphizzz/xFish-Lite
 #
 # Usage:
 #   source /path/to/xfish-lite.fish
@@ -20,7 +20,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.52
+set -g XFISH_LITE_VERSION 3.53
 
 # Platform detection
 set -g _xfish_isLinux 0
