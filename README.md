@@ -6,7 +6,7 @@ Minimal xFish for Docker containers, servers, and lightweight environments.
 
 ```fish
 # Clone the repo
-git clone https://gitlab.x-toolz.com/X-ToolZ/xfish-lite.git ~/xfish-lite
+git clone https://github.com/Memphizzz/xFish-Lite ~/xfish-lite
 
 # Source it (run manually or add to your init)
 source ~/xfish-lite/xfish-lite.fish
@@ -18,7 +18,7 @@ xfish.lite.setup
 ## One-liner (fish shell)
 
 ```fish
-git clone https://gitlab.x-toolz.com/X-ToolZ/xfish-lite.git ~/xfish-lite && source ~/xfish-lite/xfish-lite.fish
+git clone https://github.com/Memphizzz/xFish-Lite ~/xfish-lite && source ~/xfish-lite/xfish-lite.fish
 ```
 
 ## What's Included
