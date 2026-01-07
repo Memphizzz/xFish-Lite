@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.56
+# xFish Lite v3.57
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://github.com/Memphizzz/xFish-Lite
@@ -20,7 +20,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.56
+set -g XFISH_LITE_VERSION 3.57
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -675,7 +675,7 @@ end
 
 # Self-update
 function xfish.lite.pull
-	set -l repo_url "https://gitlab.x-toolz.com/X-ToolZ/xfish-lite/-/raw/master/xfish-lite.fish"
+	set -l repo_url "https://github.com/Memphizzz/xFish-Lite.git"
 	set -l self (status filename)
 
 	_xfish.echo.blue "Checking for updates.."
