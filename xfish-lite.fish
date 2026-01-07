@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.54
+# xFish Lite v3.55
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://github.com/Memphizzz/xFish-Lite
@@ -20,7 +20,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.54
+set -g XFISH_LITE_VERSION 3.55
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -420,6 +420,172 @@ function xservice
 	end
 end
 
+# --- modules/claudecode.fish ---
+set -g _xfish_cc_pending ~/.xfish_cc_pending
+
+function _cc_open
+    set -l name $argv[1]
+    set -l path $argv[2]
+    set -l session (tmux display -p '#{session_name}')
+    tmux new-window -n "CC: $name" -c "$path" -a -t "$session" "claude"
+end
+
+function _cc_select
+    # Returns: sets _cc_selected_name, _cc_selected_path, _cc_selected_monitor
+    set -g _cc_selected_name
+    set -g _cc_selected_path
+    set -g _cc_selected_monitor "left"
+
+    # Prompt for projects directory if not configured
+    if not set -q _xfish_devtemp; or not test -d "$_xfish_devtemp"
+        read -P (set_color yellow)"[xFish] Enter projects directory: "(set_color normal) devtemp_path
+        test -n "$devtemp_path" -a -d "$devtemp_path"; and set -Ux _xfish_devtemp $devtemp_path
+    end
+
+    set -l names
+    set -l paths
+
+    # Static favorites
+    set -a names "xFish"
+    set -a paths "$_xfish_base"
+
+    if test -n "$_xfish_base_local"; and test -d "$_xfish_base_local"
+        set -a names "xFish-local"
+        set -a paths "$_xfish_base_local"
+    end
+
+    # Dynamic projects from DevTemp (all folders, sorted by modification time)
+    if test -d "$_xfish_devtemp"
+        for d in (find "$_xfish_devtemp" -maxdepth 1 -mindepth 1 -type d ! -name '*.worktrees' -printf '%T@ %p\n' | sort -rn | cut -d' ' -f2-)
+            set -a names (basename $d)
+            set -a paths $d
+        end
+    end
+
+    if test (count $names) -eq 0
+        _xfish.echo.red "No projects found"
+        return 1
+    end
+
+    if type -q fzf
+        # Calculate width based on longest name + padding for border/pointer
+        set -l max_len 0
+        for n in $names
+            set -l len (string length "$n")
+            if test $len -gt $max_len
+                set max_len $len
+            end
+        end
+        set -l width (math $max_len + 6)
+
+        # Step 1: Select project
+        set -l selected (printf '%s\n' $names | fzf \
+            --tmux=center,$width,50% \
+            --no-input \
+            --no-sort \
+            --reverse \
+            --border=rounded \
+            --border-label=" Claude Code " \
+            --pointer="▶" \
+            --color="border:yellow,label:yellow" \
+            --info=hidden \
+            --no-scrollbar)
+
+        if test -n "$selected"
+            set -l idx (contains -i $selected $names)
+            set -g _cc_selected_name $selected
+            set -g _cc_selected_path $paths[$idx]
+
+            # Step 2: Select mode/monitor
+            set -l mode (printf '%s\n' "← Left" "→ Right" "◇ Standalone" | fzf \
+                --tmux=center,18,5 \
+                --no-input \
+                --no-sort \
+                --reverse \
+                --border=rounded \
+                --border-label=" Mode " \
+                --pointer="▶" \
+                --color="border:yellow,label:yellow" \
+                --info=hidden \
+                --no-scrollbar)
+
+            # Escape cancels (empty mode)
+            if test -z "$mode"
+                set -g _cc_selected_name
+                return 1
+            end
+
+            if string match -q "*Standalone*" "$mode"
+                set -g _cc_selected_monitor "standalone"
+            else if string match -q "*Right*" "$mode"
+                set -g _cc_selected_monitor "right"
+            end
+        end
+    else
+        _xfish.echo.yellow "Select project for Claude Code:"
+        for i in (seq (count $names))
+            echo "  $i) $names[$i]"
+        end
+        echo ""
+        read -P "Choice [1-"(count $names)"]: " choice
+
+        if test -n "$choice"; and test "$choice" -ge 1; and test "$choice" -le (count $names)
+            set -g _cc_selected_name $names[$choice]
+            set -g _cc_selected_path $paths[$choice]
+        end
+    end
+
+    test -n "$_cc_selected_name"
+end
+
+# Config: positions for new Claude windows
+# Your setup: left=-1152,0  center=0,0  right=5000,0
+set -g _xfish_cc_pos_left "-1152,0"
+set -g _xfish_cc_pos_right "5000,0"
+set -g _xfish_cc_standalone_size "142,36"
+set -g _xfish_cc_standalone_pos "4180,280"
+
+# Open in new Windows Terminal window
+function claudecode.new
+    if _cc_select
+        set -l wt_args -w new
+
+        if test "$_cc_selected_monitor" = "standalone"
+            # Standalone mode: pending file with standalone flag, windowed size + position
+            printf '%s\n%s\n%s\n' "$_cc_selected_name" "$_cc_selected_path" "standalone" > $_xfish_cc_pending
+            set -a wt_args --pos $_xfish_cc_standalone_pos --size $_xfish_cc_standalone_size
+            wt.exe $wt_args
+            _xfish.echo.green "Launching $_cc_selected_name standalone..."
+        else
+            # Tmux mode: pending file without standalone flag, fullscreen
+            printf '%s\n%s\n' "$_cc_selected_name" "$_cc_selected_path" > $_xfish_cc_pending
+
+            if test "$_cc_selected_monitor" = "left"
+                set -a wt_args --pos $_xfish_cc_pos_left
+            else
+                set -a wt_args --pos $_xfish_cc_pos_right
+            end
+            set -a wt_args -F
+
+            wt.exe $wt_args
+            _xfish.echo.green "Launching $_cc_selected_name on $_cc_selected_monitor monitor..."
+        end
+    end
+end
+
+function claudecode.init
+    if _cc_select
+        _cc_open $_cc_selected_name $_cc_selected_path
+    end
+end
+
+# Shortcuts
+alias cc.init='claudecode.init'
+alias cc.new='claudecode.new'
+
+set -g _xfish_base (dirname (realpath (status filename)))
+
+# Theme settings
 set -g fish_prompt_pwd_dir_length 0
 set -g theme_color_scheme dark
 set -g theme_display_vi no
@@ -547,6 +713,12 @@ end
 set -g _xfish_initEcho 1
 _xfish.aliases.load
 umask 022
+
+# Claude Code aliases (WSL only)
+if IsWSL
+	alias cc.new='claudecode.new'
+	alias cc.init='claudecode.init'
+end
 
 # Source local customizations (not overwritten by updates)
 set -l _lite_local (dirname (realpath (status filename)))/xfish-lite-local.fish
