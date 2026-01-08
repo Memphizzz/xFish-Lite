@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.58
+# xFish Lite v3.59
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://github.com/Memphizzz/xFish-Lite
@@ -20,7 +20,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.58
+set -g XFISH_LITE_VERSION 3.59
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -675,13 +675,13 @@ end
 
 # Self-update
 function xfish.lite.pull
-	set -l repo_url "https://github.com/Memphizzz/xFish-Lite.git"
-	set -l self (status filename)
-
 	_xfish.echo.blue "Checking for updates.."
 
-	# Get remote version
-	set -l remote_ver (curl -sf $repo_url | head -3 | string match -r 'v[\d.]+')
+	# Fetch tags from remote
+	git -C $_xfish_base fetch --tags -q
+
+	# Get remote version from latest tag
+	set -l remote_ver (git -C $_xfish_base describe --tags --abbrev=0 origin/main 2>/dev/null)
 	set -l local_ver "v$XFISH_LITE_VERSION"
 
 	if test -z "$remote_ver"
@@ -698,12 +698,12 @@ function xfish.lite.pull
 	read -p "set_color yellow; echo -n 'Update now? [y/N] '; set_color normal" confirm
 
 	if test "$confirm" = 'y' -o "$confirm" = 'Y'
-		_xfish.echo.blue "Downloading.."
-		if curl -sf $repo_url -o $self
+		_xfish.echo.blue "Pulling updates.."
+		if git -C $_xfish_base pull
 			_xfish.echo.green "Updated to $remote_ver!"
 			xfish.lite.reload
 		else
-			_xfish.echo.red "Download failed!"
+			_xfish.echo.red "Git pull failed!"
 			return 1
 		end
 	end
