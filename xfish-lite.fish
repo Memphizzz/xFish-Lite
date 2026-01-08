@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.61
+# xFish Lite v3.62
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://github.com/Memphizzz/xFish-Lite
@@ -20,7 +20,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.61
+set -g XFISH_LITE_VERSION 3.62
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -595,7 +595,7 @@ set -g theme_display_k8s_context no
 set -g theme_display_user ssh
 set -g theme_date_format '+%T'
 
-# Simple tmux init
+# Simple tmux init with session independence
 function xfish.lite.tmux
 	if IsTmux
 		return
@@ -606,11 +606,24 @@ function xfish.lite.tmux
 		return 1
 	end
 
-	set -l session_name (hostname)
-	if not tmux has-session -t $session_name 2>/dev/null
-		tmux new-session -d -s $session_name
+	# Sanitize hostname (dots are invalid in tmux session names)
+	set -l master_session (hostname | string replace -a '.' '_')
+
+	# Create master session if it doesn't exist
+	if not tmux has-session -t $master_session 2>/dev/null
+		tmux new-session -d -s $master_session
 	end
-	exec tmux attach-session -t $session_name
+
+	# Find next available session ID for independence
+	set -l session_id 1
+	while tmux has-session -t {$master_session}_{$session_id} 2>/dev/null
+		set session_id (math $session_id + 1)
+	end
+
+	set -l session_name {$master_session}_{$session_id}
+
+	# Create linked session with destroy-unattached for independence
+	exec tmux new-session -d -t $master_session -s $session_name \; set-option destroy-unattached \; attach-session -t $session_name
 end
 
 # Setup tmux configs
