@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.63
+# xFish Lite v3.64
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://github.com/Memphizzz/xFish-Lite
@@ -20,7 +20,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.63
+set -g XFISH_LITE_VERSION 3.64
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -359,10 +359,10 @@ function xfish.installers.brewbasics
 	end
 
 	# Packages to remove (obsolete versions)
-	set obsolete_packages  youtube-dl
+	set obsolete_packages youtube-dl ack
 
 	# Packages to install (new/correct versions)
-	set tmp btop ack bat eza ncdu lsd duf tldr gping procs
+	set tmp btop bat eza ncdu lsd duf tldr gping procs
 	set tmp $tmp curlie aria2 fd zoxide speedtest-cli yt-dlp
 	set tmp $tmp lolcat figlet dust
 
