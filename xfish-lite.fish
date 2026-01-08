@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.62
+# xFish Lite v3.63
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://github.com/Memphizzz/xFish-Lite
@@ -20,7 +20,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.62
+set -g XFISH_LITE_VERSION 3.63
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -346,6 +346,57 @@ end
 function _ssh2
 	set -l session (tmux display-message -p '#S')
 	tmux new-window -n "$argv[1]" -a -t $session $argv[2..99]
+end
+
+function xfish.installers.brew
+	/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+end
+
+function xfish.installers.brewbasics
+	if not type -q brew
+		_xfish.echo.red "brew not found! Run 'xfish.installers.brew' first!"
+		return
+	end
+
+	# Packages to remove (obsolete versions)
+	set obsolete_packages  youtube-dl
+
+	# Packages to install (new/correct versions)
+	set tmp btop ack bat eza ncdu lsd duf tldr gping procs
+	set tmp $tmp curlie aria2 fd zoxide speedtest-cli yt-dlp
+	set tmp $tmp lolcat figlet dust
+
+	_xfish.echo.blue "The following obsolete packages will be removed:"
+	for item in $obsolete_packages
+		_xfish.echo "  - $item"
+	end
+	_xfish.echo ""
+	
+	_xfish.echo.blue "The following packages will be installed via Brew:"
+	for item in $tmp
+		_xfish.echo "  - $item"
+	end
+	_xfish.echo ""
+	
+	if not _xfish.ask "Do you want to continue with the installation?"
+		_xfish.echo "Installation cancelled."
+		return
+	end
+
+	# Remove obsolete packages first
+	_xfish.echo.blue "Removing obsolete packages..."
+	for item in $obsolete_packages
+		_xfish.echo.yellow "Removing $item..."
+		brew uninstall $item 2>/dev/null || true
+	end
+
+	# Install new/correct versions
+	for item in $tmp
+		_xfish.echo.blue "Installing $item.."
+		if not eval brew install $item
+			_xfish.echo.red "Failed to install $item!"
+		end
+	end
 end
 
 function xfish.installers.nano
