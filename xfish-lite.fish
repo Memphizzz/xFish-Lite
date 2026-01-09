@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.66
+# xFish Lite v3.67
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://github.com/Memphizzz/xFish-Lite
@@ -20,7 +20,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.66
+set -g XFISH_LITE_VERSION 3.67
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -359,16 +359,16 @@ function xfish.installers.brewbasics
 	end
 
 	# Packages to remove (obsolete versions)
-	set obsolete_packages youtube-dl ack lsd exa speedtest-cli
+	set obsolete_packages youtube-dl ack lsd exa
 
 	# Packages to install (new/correct versions)
 	set tmp btop bat eza ncdu duf tldr gping procs ripgrep
 	set tmp $tmp curlie aria2 fd zoxide yt-dlp
 	set tmp $tmp lolcat figlet dust fzf jq
-	set tmp $tmp git-delta hyperfine sd dog glow bandwhich speedtest
+	set tmp $tmp git-delta hyperfine sd dog glow bandwhich speedtest-cli
 
 	# apt package names that conflict (apt name -> brew name)
-	set apt_conflicts bat fd-find ripgrep ncdu
+	set apt_conflicts bat fd-find ripgrep ncdu speedtest-cli
 
 	_xfish.echo.blue "The following obsolete brew packages will be removed:"
 	for item in $obsolete_packages
