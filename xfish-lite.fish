@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.64
+# xFish Lite v3.65
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://github.com/Memphizzz/xFish-Lite
@@ -20,7 +20,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.64
+set -g XFISH_LITE_VERSION 3.65
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -359,43 +359,56 @@ function xfish.installers.brewbasics
 	end
 
 	# Packages to remove (obsolete versions)
-	set obsolete_packages youtube-dl ack
+	set obsolete_packages youtube-dl ack lsd exa speedtest-cli
 
 	# Packages to install (new/correct versions)
-	set tmp btop bat eza ncdu lsd duf tldr gping procs
-	set tmp $tmp curlie aria2 fd zoxide speedtest-cli yt-dlp
-	set tmp $tmp lolcat figlet dust
+	set tmp btop bat eza ncdu duf tldr gping procs ripgrep
+	set tmp $tmp curlie aria2 fd zoxide yt-dlp
+	set tmp $tmp lolcat figlet dust fzf jq
+	set tmp $tmp git-delta hyperfine sd dog glow bandwhich speedtest
 
-	_xfish.echo.blue "The following obsolete packages will be removed:"
+	# apt package names that conflict (apt name -> brew name)
+	set apt_conflicts bat fd-find ripgrep ncdu
+
+	_xfish.echo.blue "The following obsolete brew packages will be removed:"
 	for item in $obsolete_packages
 		_xfish.echo "  - $item"
 	end
 	_xfish.echo ""
-	
+
+	_xfish.echo.blue "The following apt packages will be removed (older than brew):"
+	for item in $apt_conflicts
+		_xfish.echo "  - $item"
+	end
+	_xfish.echo ""
+
 	_xfish.echo.blue "The following packages will be installed via Brew:"
 	for item in $tmp
 		_xfish.echo "  - $item"
 	end
 	_xfish.echo ""
-	
+
 	if not _xfish.ask "Do you want to continue with the installation?"
 		_xfish.echo "Installation cancelled."
 		return
 	end
 
-	# Remove obsolete packages first
-	_xfish.echo.blue "Removing obsolete packages..."
+	# Remove obsolete brew packages first
+	_xfish.echo.blue "Removing obsolete brew packages..."
 	for item in $obsolete_packages
-		_xfish.echo.yellow "Removing $item..."
-		brew uninstall $item 2>/dev/null || true
+		brew uninstall $item 2>/dev/null; or true
+	end
+
+	# Remove conflicting apt packages (older versions)
+	_xfish.echo.blue "Removing conflicting apt packages..."
+	for item in $apt_conflicts
+		sudo apt remove -y $item 2>/dev/null; or true
 	end
 
 	# Install new/correct versions
 	for item in $tmp
 		_xfish.echo.blue "Installing $item.."
-		if not eval brew install $item
-			_xfish.echo.red "Failed to install $item!"
-		end
+		brew install $item; or _xfish.echo.red "Failed to install $item!"
 	end
 end
 
