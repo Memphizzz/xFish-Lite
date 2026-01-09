@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.65
+# xFish Lite v3.66
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://github.com/Memphizzz/xFish-Lite
@@ -20,7 +20,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.65
+set -g XFISH_LITE_VERSION 3.66
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -376,11 +376,13 @@ function xfish.installers.brewbasics
 	end
 	_xfish.echo ""
 
-	_xfish.echo.blue "The following apt packages will be removed (older than brew):"
-	for item in $apt_conflicts
-		_xfish.echo "  - $item"
+	if IsDebian
+		_xfish.echo.blue "The following apt packages will be removed (older than brew):"
+		for item in $apt_conflicts
+			_xfish.echo "  - $item"
+		end
+		_xfish.echo ""
 	end
-	_xfish.echo ""
 
 	_xfish.echo.blue "The following packages will be installed via Brew:"
 	for item in $tmp
@@ -400,9 +402,11 @@ function xfish.installers.brewbasics
 	end
 
 	# Remove conflicting apt packages (older versions)
-	_xfish.echo.blue "Removing conflicting apt packages..."
-	for item in $apt_conflicts
-		sudo apt remove -y $item 2>/dev/null; or true
+	if IsDebian
+		_xfish.echo.blue "Removing conflicting apt packages..."
+		for item in $apt_conflicts
+			sudo apt remove -y $item 2>/dev/null; or true
+		end
 	end
 
 	# Install new/correct versions
