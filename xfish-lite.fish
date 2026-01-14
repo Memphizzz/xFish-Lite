@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.68
+# xFish Lite v3.69
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://github.com/Memphizzz/xFish-Lite
@@ -20,7 +20,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.68
+set -g XFISH_LITE_VERSION 3.69
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -538,6 +538,53 @@ function xfish.installers.claude-config
 			end
 		else
 			_xfish.echo.yellow "  $item not found in repo, skipping"
+		end
+	end
+
+	# Platform-specific screenshot setup and settings.json generation
+	set -l settings_file $claude_dir/settings.json
+	set -l template_file $repo_path/settings.template.json
+
+	if test -e $settings_file
+		_xfish.echo.yellow "  settings.json already exists, skipping"
+	else if not test -e $template_file
+		_xfish.echo.red "  Template not found: $template_file"
+	else
+		set -l screenshots_path ""
+
+		if IsWSL
+			set screenshots_path "/mnt/c/Users/$WSL_USER/Pictures/Screenshots"
+			_xfish.echo "  Screenshots: $screenshots_path"
+
+		else if IsMacOSX
+			set screenshots_path "$HOME/Pictures/Screenshots"
+			if not test -d $screenshots_path
+				mkdir -p $screenshots_path
+				_xfish.echo "  Created $screenshots_path"
+			end
+			defaults write com.apple.screencapture location $screenshots_path
+			_xfish.echo "  Set macOS screenshot location"
+
+		else if IsLinux
+			_xfish.echo "  Skipping screenshots (headless)"
+		end
+
+		# Generate settings.json from template
+		if test -n "$screenshots_path"
+			sed -e "s|{{CLAUDE_DIR}}|$claude_dir|g" \
+			    -e "s|{{SCREENSHOTS_PATH}}|$screenshots_path|g" \
+			    $template_file > $settings_file
+			_xfish.echo.green "  Created settings.json"
+		else
+			# Linux: minimal settings without screenshot permissions
+			echo '{
+  "statusLine": {
+    "type": "command",
+    "command": "'$claude_dir'/statusline-command.sh"
+  },
+  "promptSuggestionEnabled": false
+}' > $settings_file
+			_xfish.echo.green "  Created minimal settings.json"
 		end
 	end
 
