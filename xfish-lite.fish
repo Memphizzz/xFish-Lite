@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.67
+# xFish Lite v3.68
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://github.com/Memphizzz/xFish-Lite
@@ -20,7 +20,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.67
+set -g XFISH_LITE_VERSION 3.68
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -191,13 +191,25 @@ function _xfish.confirm -a question
 	end
 end
 
-function _xfish.ask -a question
-	read -p "set_color yellow; echo -n \"$_xfish_prefix $question [y/N] \"; set_color normal" _xfish_continue
-
-	if test $_xfish_continue = 'Y' -o $_xfish_continue = 'y' -o $_xfish_continue = 'yes' -o $_xfish_continue = 'YES'
+function _xfish.ask -a question -a default
+	if test -n "$default"
+		# Text input mode with default value
+		read -p "set_color yellow; echo -n \"$_xfish_prefix $question [$default]: \"; set_color normal" _xfish_answer
+		if test -z "$_xfish_answer"
+			echo $default
+		else
+			echo $_xfish_answer
+		end
 		return 0
 	else
-		return 1
+		# Yes/no mode (original behavior)
+		read -p "set_color yellow; echo -n \"$_xfish_prefix $question [y/N] \"; set_color normal" _xfish_continue
+
+		if test $_xfish_continue = 'Y' -o $_xfish_continue = 'y' -o $_xfish_continue = 'yes' -o $_xfish_continue = 'YES'
+			return 0
+		else
+			return 1
+		end
 	end
 end
 
@@ -452,6 +464,84 @@ function xfish.installers.fishtools
 	end
 
 	curl -sL https://git.io/fisher | source && fisher install jorgebucaran/fisher oh-my-fish/theme-bobthefish
+end
+
+function xfish.installers.claude-config
+	set -l repo_path
+	set -l claude_dir ~/.claude
+	set -l default_path
+
+	# Determine default path based on platform
+	if IsWSL
+		if not set -q WSL_USER
+			_xfish.echo.red "WSL_USER not set. Run setup.fish first."
+			return 1
+		end
+		set default_path "/mnt/c/Users/$WSL_USER/clones/claude-config"
+	else if IsMacOSX
+		set default_path ~/clones/claude-config
+	else if IsLinux
+		set default_path ~/clones/claude-config
+	else
+		_xfish.echo.red "Unsupported platform"
+		return 1
+	end
+
+	_xfish.echo.blue "Claude Code Configuration Installer"
+	_xfish.echo ""
+	set repo_path (_xfish.ask "Clone location" $default_path)
+	_xfish.echo ""
+	_xfish.echo "  Repo path:  $repo_path"
+	_xfish.echo "  Claude dir: $claude_dir"
+	_xfish.echo ""
+	_xfish.echo "This will:"
+	_xfish.echo "  - Clone claude-config repo (if not present)"
+	_xfish.echo "  - Symlink CLAUDE.md, skills/, and helper scripts"
+	_xfish.echo ""
+
+	if not _xfish.ask "Continue with installation?"
+		_xfish.echo "Installation cancelled."
+		return
+	end
+
+	# Ensure ~/.claude exists
+	mkdir -p $claude_dir
+
+	# Clone repo if not present
+	if not test -d $repo_path
+		_xfish.echo.blue "Cloning claude-config repository..."
+		mkdir -p (dirname $repo_path)
+		if not git clone git@github.com:Memphizzz/claude-config.git $repo_path
+			_xfish.echo.red "Failed to clone repository"
+			return 1
+		end
+	else
+		_xfish.echo "Repository already exists at $repo_path"
+	end
+
+	# Create symlinks
+	_xfish.echo.blue "Creating symlinks..."
+
+	for item in CLAUDE.md skills latest-screenshot.sh statusline-command.sh
+		set -l src $repo_path/$item
+		set -l dst $claude_dir/$item
+
+		if test -e $src
+			if test -L $dst
+				_xfish.echo "  $item already symlinked"
+			else if test -e $dst
+				_xfish.echo.yellow "  $item exists, backing up..."
+				mv $dst $dst.bak
+				ln -sv $src $dst
+			else
+				ln -sv $src $dst
+			end
+		else
+			_xfish.echo.yellow "  $item not found in repo, skipping"
+		end
+	end
+
+	_xfish.echo.green "Claude Code configuration installed!"
 end
 
 
