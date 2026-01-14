@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.69
+# xFish Lite v3.70
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://github.com/Memphizzz/xFish-Lite
@@ -20,7 +20,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.69
+set -g XFISH_LITE_VERSION 3.70
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -522,7 +522,7 @@ function xfish.installers.claude-config
 	# Create symlinks
 	_xfish.echo.blue "Creating symlinks..."
 
-	for item in CLAUDE.md skills latest-screenshot.sh statusline-command.sh
+	for item in CLAUDE.md skills statusline-command.sh
 		set -l src $repo_path/$item
 		set -l dst $claude_dir/$item
 
@@ -540,6 +540,9 @@ function xfish.installers.claude-config
 			_xfish.echo.yellow "  $item not found in repo, skipping"
 		end
 	end
+
+	# Make statusline script executable
+	chmod +x $repo_path/statusline-command.sh 2>/dev/null
 
 	# Platform-specific screenshot setup and settings.json generation
 	set -l settings_file $claude_dir/settings.json
@@ -569,12 +572,22 @@ function xfish.installers.claude-config
 			_xfish.echo "  Skipping screenshots (headless)"
 		end
 
-		# Generate settings.json from template
+		# Generate settings.json and latest-screenshot.sh from templates
 		if test -n "$screenshots_path"
 			sed -e "s|{{CLAUDE_DIR}}|$claude_dir|g" \
 			    -e "s|{{SCREENSHOTS_PATH}}|$screenshots_path|g" \
 			    $template_file > $settings_file
 			_xfish.echo.green "  Created settings.json"
+
+			# Generate latest-screenshot.sh
+			set -l screenshot_template $repo_path/latest-screenshot.template.sh
+			set -l screenshot_script $claude_dir/latest-screenshot.sh
+			if test -e $screenshot_template
+				sed -e "s|{{SCREENSHOTS_DIR}}|$screenshots_path|g" \
+				    $screenshot_template > $screenshot_script
+				chmod +x $screenshot_script
+				_xfish.echo.green "  Created latest-screenshot.sh"
+			end
 		else
 			# Linux: minimal settings without screenshot permissions
 			echo '{
