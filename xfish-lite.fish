@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.73
+# xFish Lite v3.74
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://github.com/Memphizzz/xFish-Lite
@@ -20,7 +20,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.73
+set -g XFISH_LITE_VERSION 3.74
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -371,35 +371,27 @@ function xfish.installers.brewbasics
 	end
 
 	# Packages to remove (obsolete versions)
-	set obsolete_packages youtube-dl ack lsd exa
+	set obsolete_packages youtube-dl ack lsd exa tldr dog speedtest-cli
 
 	# Packages to install (new/correct versions)
-	set tmp btop bat eza ncdu duf tldr gping procs ripgrep
+	set tmp btop bat eza ncdu duf tlrc gping procs ripgrep
 	set tmp $tmp curlie aria2 fd zoxide yt-dlp
 	set tmp $tmp lolcat figlet dust fzf jq
-	set tmp $tmp git-delta hyperfine sd dog glow bandwhich speedtest-cli
+	set tmp $tmp git-delta hyperfine sd doggo glow bandwhich speedtest
 
 	# apt package names to remove (same as tmp, plus apt-specific names)
 	set apt_conflicts $tmp fd-find
 
-	_xfish.echo.blue "The following obsolete brew packages will be removed:"
-	for item in $obsolete_packages
-		_xfish.echo "  - $item"
-	end
-	_xfish.echo ""
+	_xfish.echo.blue "Obsolete brew packages to remove:"
+	_xfish.echo "  $obsolete_packages"
 
 	if IsDebian
-		_xfish.echo.blue "The following apt packages will be removed (older than brew):"
-		for item in $apt_conflicts
-			_xfish.echo "  - $item"
-		end
-		_xfish.echo ""
+		_xfish.echo.blue "Apt packages to remove (replaced by brew):"
+		_xfish.echo "  $apt_conflicts"
 	end
 
-	_xfish.echo.blue "The following packages will be installed via Brew:"
-	for item in $tmp
-		_xfish.echo "  - $item"
-	end
+	_xfish.echo.blue "Packages to install via Brew:"
+	_xfish.echo "  $tmp"
 	_xfish.echo ""
 
 	if not _xfish.ask "Do you want to continue with the installation?"
@@ -409,16 +401,12 @@ function xfish.installers.brewbasics
 
 	# Remove obsolete brew packages first
 	_xfish.echo.blue "Removing obsolete brew packages..."
-	for item in $obsolete_packages
-		brew uninstall $item 2>/dev/null; or true
-	end
+	brew uninstall $obsolete_packages; or true
 
 	# Remove conflicting apt packages (older versions)
 	if IsDebian
 		_xfish.echo.blue "Removing conflicting apt packages..."
-		for item in $apt_conflicts
-			sudo apt remove -y $item 2>/dev/null; or true
-		end
+		sudo apt remove -y $apt_conflicts; or true
 	end
 
 	# Install new/correct versions
