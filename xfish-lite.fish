@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.71
+# xFish Lite v3.72
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://github.com/Memphizzz/xFish-Lite
@@ -20,7 +20,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.71
+set -g XFISH_LITE_VERSION 3.72
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -800,6 +800,789 @@ end
 # Shortcuts
 alias cc.init='claudecode.init'
 alias cc.new='claudecode.new'
+
+# --- modules/xdocker.fish ---
+function _xdocker_get_projects
+    # Returns tab-separated: project_name \t working_dir \t status \t service_count \t type
+    # Status: running (any running), stopped (all stopped), partial (mixed)
+    # Type: compose or standalone
+
+    set -l projects
+    set -l workdirs
+    set -l running_counts
+    set -l total_counts
+    set -l types
+
+    # Get all compose-managed containers
+    for line in (docker ps -a --filter "label=com.docker.compose.project" --format '{{.Label "com.docker.compose.project"}}\t{{.Label "com.docker.compose.project.working_dir"}}\t{{.State}}' 2>/dev/null)
+        set -l parts (string split \t $line)
+        set -l project $parts[1]
+        set -l workdir $parts[2]
+        set -l state $parts[3]
+
+        # Find or add project
+        set -l idx (contains -i $project $projects)
+        if test -z "$idx"
+            set -a projects $project
+            set -a workdirs $workdir
+            set -a running_counts 0
+            set -a total_counts 0
+            set -a types "compose"
+            set idx (count $projects)
+        end
+
+        # Count containers
+        set total_counts[$idx] (math $total_counts[$idx] + 1)
+        if test "$state" = "running"
+            set running_counts[$idx] (math $running_counts[$idx] + 1)
+        end
+    end
+
+    # Get standalone containers (no compose label)
+    for line in (docker ps -a --format '{{.Names}}\t{{.State}}\t{{.Label "com.docker.compose.project"}}' 2>/dev/null)
+        set -l parts (string split \t $line)
+        set -l container_name $parts[1]
+        set -l state $parts[2]
+        set -l compose_project $parts[3]
+
+        # Skip if it's a compose container
+        if test -n "$compose_project"
+            continue
+        end
+
+        set -a projects $container_name
+        set -a workdirs ""
+        set -a types "standalone"
+        set -a total_counts 1
+
+        if test "$state" = "running"
+            set -a running_counts 1
+        else
+            set -a running_counts 0
+        end
+    end
+
+    # Output results
+    for i in (seq (count $projects))
+        set -l run_state
+        if test $running_counts[$i] -eq 0
+            set run_state "stopped"
+        else if test $running_counts[$i] -eq $total_counts[$i]
+            set run_state "running"
+        else
+            set run_state "partial"
+        end
+        printf '%s\t%s\t%s\t%s\t%s\n' $projects[$i] $workdirs[$i] $run_state $total_counts[$i] $types[$i]
+    end
+end
+
+function _xdocker_get_services -a workdir
+    # Get services for a compose project
+    pushd "$workdir" 2>/dev/null; or return 1
+    docker compose config --services 2>/dev/null
+    popd
+end
+
+function _xdocker_find_project -a name
+    # Find project by name, sets _xdocker_workdir and _xdocker_type
+    set -g _xdocker_workdir
+    set -g _xdocker_type
+
+    for line in (_xdocker_get_projects)
+        set -l parts (string split \t $line)
+        if test "$parts[1]" = "$name"
+            set -g _xdocker_workdir $parts[2]
+            set -g _xdocker_type $parts[5]
+            return 0
+        end
+    end
+
+    _xfish.echo.red "Project '$name' not found"
+    return 1
+end
+
+function _xdocker_get_image_ids -a workdir
+    # Get sorted image IDs for comparison (compose projects)
+    pushd "$workdir" 2>/dev/null; or return 1
+    docker compose config --images 2>/dev/null | xargs -I {} docker image inspect {} --format '{{.Id}}' 2>/dev/null | sort
+    popd
+end
+
+function _xdocker_recreate_standalone -a name
+    # Recreate a standalone container with the same config but new image
+    # Returns 0 on success, 1 on failure
+
+    # Extract all config from the container
+    set -l image (docker inspect $name --format '{{.Config.Image}}' 2>/dev/null)
+    if test -z "$image"
+        _xfish.echo.red "Failed to get image name"
+        return 1
+    end
+
+    # Build docker run command arguments
+    set -l run_args
+
+    # Hostname
+    set -l container_hostname (docker inspect $name --format '{{.Config.Hostname}}' 2>/dev/null)
+    set -l container_short_id (docker inspect $name --format '{{.Id}}' 2>/dev/null | string sub -l 12)
+    if test -n "$container_hostname" -a "$container_hostname" != "$container_short_id"
+        set -a run_args --hostname "$container_hostname"
+    end
+
+    # Restart policy
+    set -l restart (docker inspect $name --format '{{.HostConfig.RestartPolicy.Name}}' 2>/dev/null)
+    if test -n "$restart" -a "$restart" != "no"
+        set -l max_retry (docker inspect $name --format '{{.HostConfig.RestartPolicy.MaximumRetryCount}}' 2>/dev/null)
+        if test "$restart" = "on-failure" -a -n "$max_retry" -a "$max_retry" != "0"
+            set -a run_args --restart "$restart:$max_retry"
+        else
+            set -a run_args --restart "$restart"
+        end
+    end
+
+    # Network mode
+    set -l network (docker inspect $name --format '{{.HostConfig.NetworkMode}}' 2>/dev/null)
+    if test -n "$network" -a "$network" != "default"
+        set -a run_args --network "$network"
+    end
+
+    # Port mappings
+    for port in (docker inspect $name --format '{{range $p, $conf := .NetworkSettings.Ports}}{{if $conf}}{{(index $conf 0).HostIp}}:{{(index $conf 0).HostPort}}:{{$p}}{{"\n"}}{{end}}{{end}}' 2>/dev/null)
+        if test -n "$port"
+            # Clean up empty host IP (0.0.0.0)
+            set port (string replace -r '^:' '' $port)
+            set port (string replace '0.0.0.0:' '' $port)
+            set -a run_args -p "$port"
+        end
+    end
+
+    # Volume mounts
+    for mount in (docker inspect $name --format '{{range .Mounts}}{{.Type}}:{{.Source}}:{{.Destination}}:{{.RW}}{{"\n"}}{{end}}' 2>/dev/null)
+        if test -n "$mount"
+            set -l parts (string split ':' $mount)
+            set -l type $parts[1]
+            set -l source $parts[2]
+            set -l dest $parts[3]
+            set -l rw $parts[4]
+
+            if test "$type" = "bind"
+                if test "$rw" = "false"
+                    set -a run_args -v "$source:$dest:ro"
+                else
+                    set -a run_args -v "$source:$dest"
+                end
+            else if test "$type" = "volume"
+                if test "$rw" = "false"
+                    set -a run_args -v "$source:$dest:ro"
+                else
+                    set -a run_args -v "$source:$dest"
+                end
+            end
+        end
+    end
+
+    # Environment variables
+    for env in (docker inspect $name --format '{{range .Config.Env}}{{.}}{{"\n"}}{{end}}' 2>/dev/null)
+        if test -n "$env"
+            # Skip common default env vars
+            if not string match -qr '^(PATH|HOME|HOSTNAME)=' $env
+                set -a run_args -e "$env"
+            end
+        end
+    end
+
+    # Labels (skip com.docker.* internal labels)
+    for label in (docker inspect $name --format '{{range $k, $v := .Config.Labels}}{{$k}}={{$v}}{{"\n"}}{{end}}' 2>/dev/null)
+        if test -n "$label"
+            if not string match -q 'com.docker.*' $label
+                set -a run_args --label "$label"
+            end
+        end
+    end
+
+    # Privileged mode
+    set -l privileged (docker inspect $name --format '{{.HostConfig.Privileged}}' 2>/dev/null)
+    if test "$privileged" = "true"
+        set -a run_args --privileged
+    end
+
+    # User
+    set -l user (docker inspect $name --format '{{.Config.User}}' 2>/dev/null)
+    if test -n "$user"
+        set -a run_args --user "$user"
+    end
+
+    # Working dir
+    set -l workdir (docker inspect $name --format '{{.Config.WorkingDir}}' 2>/dev/null)
+    if test -n "$workdir"
+        set -a run_args --workdir "$workdir"
+    end
+
+    # Entrypoint (if customized)
+    set -l entrypoint (docker inspect $name --format '{{json .Config.Entrypoint}}' 2>/dev/null)
+    if test -n "$entrypoint" -a "$entrypoint" != "null"
+        set -a run_args --entrypoint (echo $entrypoint | string trim -c '[]"')
+    end
+
+    # Command/args
+    set -l cmd (docker inspect $name --format '{{json .Config.Cmd}}' 2>/dev/null)
+
+    # Stop the old container
+    _xfish.echo "Stopping old container..."
+    docker stop $name >/dev/null 2>&1
+
+    # Rename old container as backup
+    set -l backup_name "$name-xdocker-old"
+    docker rename $name $backup_name >/dev/null 2>&1
+
+    # Create new container
+    _xfish.echo "Creating new container..."
+    set -l create_result
+    if test -n "$cmd" -a "$cmd" != "null"
+        # Parse JSON array for command
+        set -l cmd_args (echo $cmd | string trim -c '[]' | string split ',' | string trim -c '" ')
+        set create_result (docker run -d --name $name $run_args $image $cmd_args 2>&1)
+    else
+        set create_result (docker run -d --name $name $run_args $image 2>&1)
+    end
+
+    if test $status -ne 0
+        _xfish.echo.red "Failed to create new container: $create_result"
+        _xfish.echo "Restoring old container..."
+        docker rename $backup_name $name >/dev/null 2>&1
+        docker start $name >/dev/null 2>&1
+        return 1
+    end
+
+    # Verify new container is running
+    sleep 1
+    set -l new_state (docker inspect $name --format '{{.State.Running}}' 2>/dev/null)
+    if test "$new_state" != "true"
+        set -l logs (docker logs $name 2>&1 | tail -5)
+        _xfish.echo.red "New container failed to start"
+        _xfish.echo.red "Logs: $logs"
+        _xfish.echo "Restoring old container..."
+        docker rm -f $name >/dev/null 2>&1
+        docker rename $backup_name $name >/dev/null 2>&1
+        docker start $name >/dev/null 2>&1
+        return 1
+    end
+
+    # Success - remove old container
+    docker rm $backup_name >/dev/null 2>&1
+    return 0
+end
+
+# ============================================================================
+# Core Commands
+# ============================================================================
+
+function xdocker.status
+    set -l projects_data (_xdocker_get_projects)
+
+    if test (count $projects_data) -eq 0
+        _xfish.echo.yellow "No Docker containers found"
+        return 0
+    end
+
+    # Header
+    echo ""
+    printf "  %-25s %-12s %-12s %s\n" "PROJECT" "TYPE" "STATUS" "CONTAINERS"
+    printf "  %-25s %-12s %-12s %s\n" "-------" "----" "------" "----------"
+
+    for line in $projects_data
+        set -l parts (string split \t $line)
+        set -l project $parts[1]
+        set -l run_state $parts[3]
+        set -l count $parts[4]
+        set -l type $parts[5]
+
+        set -l state_display
+        switch $run_state
+            case "running"
+                set state_display (set_color green)"[running]"(set_color normal)
+            case "stopped"
+                set state_display (set_color red)"[stopped]"(set_color normal)
+            case "partial"
+                set state_display (set_color yellow)"[partial]"(set_color normal)
+        end
+
+        set -l type_display
+        if test "$type" = "compose"
+            set type_display (set_color cyan)"compose"(set_color normal)
+        else
+            set type_display (set_color magenta)"standalone"(set_color normal)
+        end
+
+        printf "  %-25s %-22s %-22s %s\n" $project $type_display $state_display $count
+    end
+    echo ""
+end
+
+function xdocker.update -a name
+    # Parse flags
+    set -l follow_logs 0
+    set -l project_name
+
+    for arg in $argv
+        switch $arg
+            case '-f' '--follow'
+                set follow_logs 1
+            case '-*'
+                _xfish.echo.red "Unknown flag: $arg"
+                return 1
+            case '*'
+                set project_name $arg
+        end
+    end
+
+    if test -z "$project_name"
+        _xfish.echo.red "Usage: xdocker.update <project> [-f]"
+        return 1
+    end
+
+    if not _xdocker_find_project $project_name
+        return 1
+    end
+
+    _xfish.echo.blue "Updating '$project_name'..."
+
+    # Handle standalone containers differently
+    if test "$_xdocker_type" = "standalone"
+        # Get image name from container
+        set -l image (docker inspect $project_name --format '{{.Config.Image}}' 2>/dev/null)
+        if test -z "$image"
+            _xfish.echo.red "Failed to get image name"
+            return 1
+        end
+
+        # Get current image ID
+        set -l before (docker inspect $project_name --format '{{.Image}}' 2>/dev/null)
+
+        # Pull new image
+        _xfish.echo "Pulling $image..."
+        docker pull $image
+        if test $status -ne 0
+            _xfish.echo.red "Pull failed"
+            return 1
+        end
+
+        # Get new image ID
+        set -l after (docker inspect $image --format '{{.Id}}' 2>/dev/null)
+
+        # Compare
+        if test "$before" = "$after"
+            _xfish.echo.green "Already up to date - no restart needed"
+            test $follow_logs -eq 1; and xdocker.logs $project_name
+            return 0
+        end
+
+        # Image changed, recreate container
+        _xfish.echo "Image updated, recreating container..."
+        if not _xdocker_recreate_standalone $project_name
+            return 1
+        end
+
+        _xfish.echo.green "Update complete!"
+        test $follow_logs -eq 1; and xdocker.logs $project_name
+        return 0
+    end
+
+    # Compose project update
+    # Get image IDs before pull
+    set -l before (_xdocker_get_image_ids $_xdocker_workdir)
+
+    # Pull
+    _xfish.echo "Pulling images..."
+    pushd "$_xdocker_workdir"
+    docker compose pull
+    set -l pull_status $status
+
+    if test $pull_status -ne 0
+        _xfish.echo.red "Pull failed"
+        popd
+        return 1
+    end
+
+    # Get image IDs after pull
+    set -l after (_xdocker_get_image_ids $_xdocker_workdir)
+
+    # Compare
+    if test "$before" = "$after"
+        _xfish.echo.green "Already up to date - no restart needed"
+        popd
+        test $follow_logs -eq 1; and xdocker.logs $project_name
+        return 0
+    end
+
+    # Images changed, restart
+    _xfish.echo "Images updated, restarting..."
+    docker compose down
+    docker compose up -d
+    popd
+
+    _xfish.echo.green "Update complete!"
+    test $follow_logs -eq 1; and xdocker.logs $project_name
+    return 0
+end
+
+function xdocker.logs -a name service
+    if test -z "$name"
+        _xfish.echo.red "Usage: xdocker.logs <project> [service]"
+        return 1
+    end
+
+    if not _xdocker_find_project $name
+        return 1
+    end
+
+    if test "$_xdocker_type" = "standalone"
+        _xfish.echo.blue "Following logs for '$name'..."
+        docker logs -f $name
+    else
+        pushd "$_xdocker_workdir"
+        if test -n "$service"
+            _xfish.echo.blue "Following logs for '$name/$service'..."
+            docker compose logs -f $service
+        else
+            _xfish.echo.blue "Following logs for '$name'..."
+            docker compose logs -f
+        end
+        popd
+    end
+    return 0
+end
+
+function xdocker.stop -a name
+    if test -z "$name"
+        _xfish.echo.red "Usage: xdocker.stop <project>"
+        return 1
+    end
+
+    if not _xdocker_find_project $name
+        return 1
+    end
+
+    _xfish.echo.blue "Stopping '$name'..."
+    if test "$_xdocker_type" = "standalone"
+        docker stop $name
+    else
+        pushd "$_xdocker_workdir"
+        docker compose down
+        popd
+    end
+    _xfish.echo.green "Stopped"
+end
+
+function xdocker.start -a name
+    if test -z "$name"
+        _xfish.echo.red "Usage: xdocker.start <project>"
+        return 1
+    end
+
+    if not _xdocker_find_project $name
+        return 1
+    end
+
+    _xfish.echo.blue "Starting '$name'..."
+    if test "$_xdocker_type" = "standalone"
+        docker start $name
+    else
+        pushd "$_xdocker_workdir"
+        docker compose up -d
+        popd
+    end
+    _xfish.echo.green "Started"
+end
+
+function xdocker.restart -a name
+    if test -z "$name"
+        _xfish.echo.red "Usage: xdocker.restart <project>"
+        return 1
+    end
+
+    if not _xdocker_find_project $name
+        return 1
+    end
+
+    _xfish.echo.blue "Restarting '$name'..."
+    if test "$_xdocker_type" = "standalone"
+        docker restart $name
+    else
+        pushd "$_xdocker_workdir"
+        docker compose down
+        docker compose up -d
+        popd
+    end
+    _xfish.echo.green "Restarted"
+end
+
+# ============================================================================
+# Interactive UI Mode
+# ============================================================================
+
+function xdocker
+    # fzf-based interactive mode
+    if not type -q fzf
+        _xfish.echo.red "fzf is required for interactive mode"
+        _xfish.echo "Use xdocker.status, xdocker.update, etc. for CLI mode"
+        return 1
+    end
+
+    set -l projects_data (_xdocker_get_projects)
+
+    if test (count $projects_data) -eq 0
+        _xfish.echo.yellow "No Docker containers found"
+        return 0
+    end
+
+    # Build display list with status colors (ANSI codes for fzf)
+    set -l display_lines
+    set -l project_names
+    set -l project_workdirs
+    set -l project_types
+    set -l project_states
+
+    for line in $projects_data
+        set -l parts (string split \t $line)
+        set -l project $parts[1]
+        set -l workdir $parts[2]
+        set -l run_state $parts[3]
+        set -l count $parts[4]
+        set -l type $parts[5]
+
+        set -a project_names $project
+        set -a project_workdirs $workdir
+        set -a project_types $type
+        set -a project_states $run_state
+
+        set -l state_color
+        switch $run_state
+            case "running"
+                set state_color \e'[32m[running]'\e'[0m'
+            case "stopped"
+                set state_color \e'[31m[stopped]'\e'[0m'
+            case "partial"
+                set state_color \e'[33m[partial]'\e'[0m'
+        end
+
+        set -l type_color
+        if test "$type" = "compose"
+            set type_color \e'[36mcompose'\e'[0m'
+        else
+            set type_color \e'[35mstandalone'\e'[0m'
+        end
+
+        set -a display_lines (printf "%-25s %-10s %s" $project $type_color $state_color)
+    end
+
+    # Sort by state: running first, then partial, then stopped
+    set -l sorted_indices
+    # Running first
+    for i in (seq (count $project_names))
+        if test "$project_states[$i]" = "running"
+            set -a sorted_indices $i
+        end
+    end
+    # Partial second
+    for i in (seq (count $project_names))
+        if test "$project_states[$i]" = "partial"
+            set -a sorted_indices $i
+        end
+    end
+    # Stopped last
+    for i in (seq (count $project_names))
+        if test "$project_states[$i]" = "stopped"
+            set -a sorted_indices $i
+        end
+    end
+
+    # Build sorted display lines
+    set -l sorted_display_lines
+    for i in $sorted_indices
+        set -a sorted_display_lines $display_lines[$i]
+    end
+
+    # Reorder all arrays to match sorted order
+    set -l tmp_names
+    set -l tmp_workdirs
+    set -l tmp_types
+    set -l tmp_states
+    for i in $sorted_indices
+        set -a tmp_names $project_names[$i]
+        set -a tmp_workdirs $project_workdirs[$i]
+        set -a tmp_types $project_types[$i]
+        set -a tmp_states $project_states[$i]
+    end
+    set project_names $tmp_names
+    set project_workdirs $tmp_workdirs
+    set project_types $tmp_types
+    set project_states $tmp_states
+    set display_lines $sorted_display_lines
+
+    # Calculate dimensions
+    set -l max_len 55
+    for line in $display_lines
+        set -l len (string length "$line")
+        if test $len -gt $max_len
+            set max_len $len
+        end
+    end
+    set -l width (math $max_len + 6)
+    set -l height (math (count $display_lines) + 4)
+    # Cap height at reasonable maximum
+    if test $height -gt 20
+        set height 20
+    end
+
+    # Step 1: Select project
+    set -l selected (printf '%s\n' $display_lines | fzf \
+        --ansi \
+        --tmux=center,$width,$height \
+        --no-sort \
+        --reverse \
+        --border=rounded \
+        --border-label=" Docker " \
+        --pointer="▶" \
+        --color="border:blue,label:blue" \
+        --info=hidden \
+        --no-scrollbar)
+
+    if test -z "$selected"
+        return 0
+    end
+
+    # Extract project name (first word)
+    set -l selected_project (string split ' ' $selected)[1]
+    set -l idx (contains -i $selected_project $project_names)
+    set -l selected_workdir $project_workdirs[$idx]
+    set -l selected_type $project_types[$idx]
+    set -l selected_state $project_states[$idx]
+
+    # Step 2: Select action (based on type and state)
+    set -l actions
+
+    # Update actions (always available)
+    if test "$selected_type" = "compose"
+        set -a actions "↑ Update        Pull & restart if changed"
+        set -a actions "↑ Update+Logs   Pull & restart, follow logs"
+    else
+        set -a actions "↑ Update        Pull & recreate if changed"
+        set -a actions "↑ Update+Logs   Pull & recreate, follow logs"
+    end
+
+    # Logs (always available)
+    set -a actions "📋 Logs          Follow container logs"
+
+    # Start/Stop based on state
+    if test "$selected_state" = "stopped"
+        if test "$selected_type" = "compose"
+            set -a actions "▶ Start         Start containers"
+        else
+            set -a actions "▶ Start         Start container"
+        end
+    else if test "$selected_state" = "running"
+        if test "$selected_type" = "compose"
+            set -a actions "■ Stop          Stop containers"
+            set -a actions "↻ Restart       Stop and start"
+        else
+            set -a actions "■ Stop          Stop container"
+            set -a actions "↻ Restart       Restart container"
+        end
+    else
+        # Partial state - show all
+        if test "$selected_type" = "compose"
+            set -a actions "▶ Start         Start containers"
+            set -a actions "■ Stop          Stop containers"
+            set -a actions "↻ Restart       Stop and start"
+        else
+            set -a actions "▶ Start         Start container"
+            set -a actions "■ Stop          Stop container"
+            set -a actions "↻ Restart       Restart container"
+        end
+    end
+
+    set -l action_count (count $actions)
+    set -l action_height (math $action_count + 4)
+
+    set -l action (printf '%s\n' $actions | fzf \
+        --tmux=center,50,$action_height \
+        --no-sort \
+        --reverse \
+        --border=rounded \
+        --border-label=" Action: $selected_project " \
+        --pointer="▶" \
+        --color="border:blue,label:blue" \
+        --info=hidden \
+        --no-scrollbar)
+
+    if test -z "$action"
+        return 0
+    end
+
+    # Parse action (first word after emoji/symbol)
+    set -l action_name (string match -r '^\S+\s+(\S+)' $action)[2]
+
+    switch $action_name
+        case "Update"
+            xdocker.update $selected_project
+        case "Update+Logs"
+            xdocker.update $selected_project -f
+        case "Logs"
+            # For compose projects with multiple services, let user pick
+            if test "$selected_type" = "compose"
+                set -l services (_xdocker_get_services $selected_workdir)
+
+                if test (count $services) -gt 1
+                    set -l service_options "All Services"
+                    set -a service_options $services
+
+                    set -l selected_service (printf '%s\n' $service_options | fzf \
+                        --tmux=center,30,50% \
+                        --no-sort \
+                        --reverse \
+                        --border=rounded \
+                        --border-label=" Service " \
+                        --pointer="▶" \
+                        --color="border:blue,label:blue" \
+                        --info=hidden \
+                        --no-scrollbar)
+
+                    if test -z "$selected_service"
+                        return 0
+                    end
+
+                    if test "$selected_service" = "All Services"
+                        xdocker.logs $selected_project
+                    else
+                        xdocker.logs $selected_project $selected_service
+                    end
+                else
+                    xdocker.logs $selected_project
+                end
+            else
+                xdocker.logs $selected_project
+            end
+        case "Start"
+            xdocker.start $selected_project
+        case "Stop"
+            xdocker.stop $selected_project
+        case "Restart"
+            xdocker.restart $selected_project
+    end
+end
+
+# ============================================================================
+# Aliases
+# ============================================================================
+
+alias xd='xdocker'
+alias xd.status='xdocker.status'
+alias xd.update='xdocker.update'
+alias xd.logs='xdocker.logs'
+alias xd.stop='xdocker.stop'
+alias xd.start='xdocker.start'
+alias xd.restart='xdocker.restart'
 
 set -g _xfish_base (dirname (realpath (status filename)))
 
