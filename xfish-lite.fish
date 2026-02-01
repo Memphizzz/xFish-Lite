@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.74
+# xFish Lite v3.75
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://github.com/Memphizzz/xFish-Lite
@@ -20,7 +20,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.74
+set -g XFISH_LITE_VERSION 3.75
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -371,13 +371,13 @@ function xfish.installers.brewbasics
 	end
 
 	# Packages to remove (obsolete versions)
-	set obsolete_packages youtube-dl ack lsd exa tldr dog speedtest-cli
+	set obsolete_packages youtube-dl ack lsd exa tldr dog
 
 	# Packages to install (new/correct versions)
 	set tmp btop bat eza ncdu duf tlrc gping procs ripgrep
 	set tmp $tmp curlie aria2 fd zoxide yt-dlp
 	set tmp $tmp lolcat figlet dust fzf jq
-	set tmp $tmp git-delta hyperfine sd doggo glow bandwhich speedtest
+	set tmp $tmp git-delta hyperfine sd doggo glow bandwhich speedtest-cli
 
 	# apt package names to remove (same as tmp, plus apt-specific names)
 	set apt_conflicts $tmp fd-find
@@ -1046,7 +1046,7 @@ function _xdocker_recreate_standalone -a name
     sleep 1
     set -l new_state (docker inspect $name --format '{{.State.Running}}' 2>/dev/null)
     if test "$new_state" != "true"
-        set -l logs (docker logs $name 2>&1 | tail -5)
+        set -l logs (docker logs -t $name 2>&1 | tail -5)
         _xfish.echo.red "New container failed to start"
         _xfish.echo.red "Logs: $logs"
         _xfish.echo "Restoring old container..."
@@ -1226,15 +1226,15 @@ function xdocker.logs -a name service
 
     if test "$_xdocker_type" = "standalone"
         _xfish.echo.blue "Following logs for '$name'..."
-        docker logs -f $name
+        docker logs -tf $name
     else
         pushd "$_xdocker_workdir"
         if test -n "$service"
             _xfish.echo.blue "Following logs for '$name/$service'..."
-            docker compose logs -f $service
+            docker compose logs -tf $service
         else
             _xfish.echo.blue "Following logs for '$name'..."
-            docker compose logs -f
+            docker compose logs -tf
         end
         popd
     end
