@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.75
+# xFish Lite v3.76
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://github.com/Memphizzz/xFish-Lite
@@ -20,7 +20,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.75
+set -g XFISH_LITE_VERSION 3.76
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -633,7 +633,7 @@ function _cc_open
     set -l name $argv[1]
     set -l path $argv[2]
     set -l session (tmux display -p '#{session_name}')
-    tmux new-window -n "CC: $name" -c "$path" -a -t "$session" "claude"
+    tmux new-window -n "CC: $name" -c "$path" -a -t "$session" "claude --enable-auto-mode"
 end
 
 function _cc_select
@@ -1305,6 +1305,68 @@ function xdocker.restart -a name
     _xfish.echo.green "Restarted"
 end
 
+function xdocker.cd -a name
+    if test -z "$name"
+        _xfish.echo.red "Usage: xdocker.cd <project>"
+        return 1
+    end
+
+    if not _xdocker_find_project $name
+        return 1
+    end
+
+    # Get all mount sources for the project
+    set -l mounts
+    if test "$_xdocker_type" = "standalone"
+        set mounts (docker inspect $name --format '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' 2>/dev/null | string match -v '')
+    else
+        # Get all containers for the compose project
+        for container in (docker ps -a --filter "label=com.docker.compose.project=$name" --format '{{.Names}}')
+            for mount in (docker inspect $container --format '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' 2>/dev/null | string match -v '')
+                if not contains $mount $mounts
+                    set -a mounts $mount
+                end
+            end
+        end
+    end
+
+    if test (count $mounts) -eq 0
+        _xfish.echo.red "No volumes found for '$name'"
+        return 1
+    end
+
+    set -l target
+    if test (count $mounts) -eq 1
+        set target $mounts[1]
+    else if type -q fzf
+        set target (printf '%s\n' $mounts | fzf \
+            --tmux=center,60,50% \
+            --no-sort \
+            --reverse \
+            --border=rounded \
+            --border-label=" Volume: $name " \
+            --pointer="▶" \
+            --color="border:blue,label:blue" \
+            --info=hidden \
+            --no-scrollbar)
+    else
+        # No fzf, use first mount
+        set target $mounts[1]
+    end
+
+    if test -z "$target"
+        return 0
+    end
+
+    if not test -d "$target"
+        _xfish.echo.red "Directory does not exist: $target"
+        return 1
+    end
+
+    cd "$target"
+    _xfish.echo.green "Changed to $target"
+end
+
 # ============================================================================
 # Interactive UI Mode
 # ============================================================================
@@ -1571,6 +1633,7 @@ alias xd.logs='xdocker.logs'
 alias xd.stop='xdocker.stop'
 alias xd.start='xdocker.start'
 alias xd.restart='xdocker.restart'
+alias xd.cd='xdocker.cd'
 
 set -g _xfish_base (dirname (realpath (status filename)))
 
