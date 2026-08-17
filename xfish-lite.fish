@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.76
+# xFish Lite v3.77
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://github.com/Memphizzz/xFish-Lite
@@ -20,7 +20,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.76
+set -g XFISH_LITE_VERSION 3.77
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -177,6 +177,22 @@ function DirectoryExists -a path
 	else
 		return 1
 	end
+end
+
+# Per-terminal member session name for a session group, so every client gets
+# its own view. Keyed on the shell's pid rather than the lowest free number:
+# names must never be reused, because a window that outlived its terminal
+# detaches its client by session name when it closes, and a recycled name
+# would send that detach to somebody else's terminal.
+function _xfish.tmux.uniqueSession -a socket base
+	set -l stamp $fish_pid"_"(date +%s)
+	set -l candidate $base"_"$stamp
+	set -l n 2
+	while tmux -S $socket has-session -t "=$candidate" &> /dev/null
+		set candidate $base"_"$stamp"_"$n
+		set n (math $n + 1)
+	end
+	echo $candidate
 end
 
 # --- lib/prompts.fish ---
@@ -636,11 +652,58 @@ function _cc_open
     tmux new-window -n "CC: $name" -c "$path" -a -t "$session" "claude --enable-auto-mode"
 end
 
-function _cc_select
-    # Returns: sets _cc_selected_name, _cc_selected_path, _cc_selected_monitor
+# Geometry picker. Without fzf the default from _cc_select stands.
+function _cc_select_mode
+    type -q fzf; or return 0
+
+    set -l mode (printf '%s\n' "← Left" "→ Right" "◇ Windowed" "◇ Bare" | fzf \
+        --tmux=center,18,6 \
+        --no-input \
+        --no-sort \
+        --reverse \
+        --border=rounded \
+        --border-label=" Mode " \
+        --pointer="▶" \
+        --color="border:yellow,label:yellow" \
+        --info=hidden \
+        --no-scrollbar)
+
+    # Escape cancels
+    test -n "$mode"; or return 1
+
+    if string match -q "*Windowed*" "$mode"
+        set -g _cc_selected_mode "windowed"
+    else if string match -q "*Bare*" "$mode"
+        set -g _cc_selected_mode "bare"
+    else if string match -q "*Right*" "$mode"
+        set -g _cc_selected_mode "right"
+    end
+end
+
+# _cc_select [path] - with a path, skips the project picker and uses that
+# directory directly; the geometry picker still runs.
+function _cc_select -a target
+    # Returns: sets _cc_selected_name, _cc_selected_path, _cc_selected_mode
     set -g _cc_selected_name
     set -g _cc_selected_path
-    set -g _cc_selected_monitor "left"
+    set -g _cc_selected_mode "left"
+
+    if test -n "$target"
+        if not test -d "$target"
+            _xfish.echo.red "Not a directory: $target"
+            return 1
+        end
+
+        # Absolute, because the launched shell starts elsewhere
+        set -g _cc_selected_path (path resolve "$target")
+        set -g _cc_selected_name (path basename $_cc_selected_path)
+
+        if not _cc_select_mode
+            set -g _cc_selected_name
+            return 1
+        end
+        return 0
+    end
 
     # Prompt for projects directory if not configured
     if not set -q _xfish_devtemp; or not test -d "$_xfish_devtemp"
@@ -702,29 +765,10 @@ function _cc_select
             set -g _cc_selected_name $selected
             set -g _cc_selected_path $paths[$idx]
 
-            # Step 2: Select mode/monitor
-            set -l mode (printf '%s\n' "← Left" "→ Right" "◇ Standalone" | fzf \
-                --tmux=center,18,5 \
-                --no-input \
-                --no-sort \
-                --reverse \
-                --border=rounded \
-                --border-label=" Mode " \
-                --pointer="▶" \
-                --color="border:yellow,label:yellow" \
-                --info=hidden \
-                --no-scrollbar)
-
-            # Escape cancels (empty mode)
-            if test -z "$mode"
+            # Step 2: Select mode
+            if not _cc_select_mode
                 set -g _cc_selected_name
                 return 1
-            end
-
-            if string match -q "*Standalone*" "$mode"
-                set -g _cc_selected_monitor "standalone"
-            else if string match -q "*Right*" "$mode"
-                set -g _cc_selected_monitor "right"
             end
         end
     else
@@ -748,46 +792,131 @@ end
 # Your setup: left=-1152,0  center=0,0  right=5000,0
 set -g _xfish_cc_pos_left "-1152,0"
 set -g _xfish_cc_pos_right "5000,0"
-set -g _xfish_cc_standalone_size "142,36"
-set -g _xfish_cc_standalone_pos "4180,280"
+set -g _xfish_cc_window_size "142,36"
+set -g _xfish_cc_window_pos "4180,280"
 
-# Open in new Windows Terminal window
-function claudecode.new
-    if _cc_select
+# Open in new Windows Terminal window.
+# The mode is handed to the new shell through the pending file, where
+# 'init.tmux' acts on it. It only picks the Windows Terminal geometry:
+# left/right are fullscreen per monitor, windowed and bare are small. All but
+# bare host Claude the same way, in its own window in the $_xfish_cc_master
+# session group; bare skips tmux entirely and dies with the terminal.
+function claudecode.new -a target
+    if _cc_select $target
         set -l wt_args -w new
 
-        if test "$_cc_selected_monitor" = "standalone"
-            # Standalone mode: pending file with standalone flag, windowed size + position
-            printf '%s\n%s\n%s\n' "$_cc_selected_name" "$_cc_selected_path" "standalone" > $_xfish_cc_pending
-            set -a wt_args --pos $_xfish_cc_standalone_pos --size $_xfish_cc_standalone_size
-            wt.exe $wt_args
-            _xfish.echo.green "Launching $_cc_selected_name standalone..."
-        else
-            # Tmux mode: pending file without standalone flag, fullscreen
-            printf '%s\n%s\n' "$_cc_selected_name" "$_cc_selected_path" > $_xfish_cc_pending
-
-            if test "$_cc_selected_monitor" = "left"
-                set -a wt_args --pos $_xfish_cc_pos_left
-            else
-                set -a wt_args --pos $_xfish_cc_pos_right
-            end
-            set -a wt_args -F
-
-            wt.exe $wt_args
-            _xfish.echo.green "Launching $_cc_selected_name on $_cc_selected_monitor monitor..."
+        switch "$_cc_selected_mode"
+            case left
+                set -a wt_args --pos $_xfish_cc_pos_left -F
+            case right
+                set -a wt_args --pos $_xfish_cc_pos_right -F
+            case '*'
+                set -a wt_args --pos $_xfish_cc_window_pos --size $_xfish_cc_window_size
         end
+
+        printf '%s\n%s\n%s\n' "$_cc_selected_name" "$_cc_selected_path" "$_cc_selected_mode" > $_xfish_cc_pending
+        wt.exe $wt_args
+        _xfish.echo.green "Launching $_cc_selected_name ($_cc_selected_mode).."
     end
 end
 
-function claudecode.init
-    if _cc_select
+function claudecode.init -a target
+    if _cc_select $target
         _cc_open $_cc_selected_name $_cc_selected_path
+    end
+end
+
+function _cc_age -a epoch
+    set -l secs (math (date +%s) - $epoch)
+    if test $secs -lt 60
+        echo "just now"
+    else if test $secs -lt 3600
+        echo (math -s0 $secs / 60)"m ago"
+    else if test $secs -lt 86400
+        echo (math -s0 $secs / 3600)"h ago"
+    else
+        echo (math -s0 $secs / 86400)"d ago"
+    end
+end
+
+# Reattach to a Claude. Each one is a standalone '$_xfish_cc_master_*' session
+# that outlives the terminal it was started from, so this is how you get back
+# after a terminal (or the whole server) dies.
+function claudecode.attach
+    set -l fmt (printf '#{session_name}\t#{session_created}\t#{session_attached}\t#{pane_current_path}\t#{window_name}')
+    set -l winids
+    set -l labels
+
+    for line in (tmux -S $_xfish_tmux_socket list-sessions -F $fmt 2>/dev/null)
+        set -l parts (string split \t -- $line)
+        string match -q "$_xfish_cc_master"'_*' -- $parts[1]; or continue
+
+        set -l suffix ""
+        test "$parts[3]" != "0"; and set suffix " (attached)"
+        set -a winids $parts[1]
+        set -a labels (printf '%-24s %-10s %s%s' (string replace 'CC: ' '' -- $parts[5]) (_cc_age $parts[2]) $parts[4] $suffix)
+    end
+
+    if test (count $winids) -eq 0
+        _xfish.echo.yellow "No live Claude sessions."
+        return 1
+    end
+
+    set -l target
+
+    if type -q fzf
+        set -l max_len 0
+        for l in $labels
+            set -l len (string length -- $l)
+            test $len -gt $max_len; and set max_len $len
+        end
+
+        set -l picked (printf '%s\n' $labels | fzf \
+            --tmux=center,(math $max_len + 6),50% \
+            --no-input \
+            --no-sort \
+            --reverse \
+            --border=rounded \
+            --border-label=" Claude Sessions " \
+            --pointer="▶" \
+            --color="border:yellow,label:yellow" \
+            --info=hidden \
+            --no-scrollbar)
+
+        test -n "$picked"; or return 1
+        set target $winids[(contains -i $picked $labels)]
+    else
+        _xfish.echo.yellow "Live Claude sessions:"
+        for i in (seq (count $labels))
+            echo "  $i) $labels[$i]"
+        end
+        echo ""
+        read -P "Choice [1-"(count $labels)"]: " choice
+
+        if test -z "$choice"; or not test "$choice" -ge 1 2>/dev/null; or test "$choice" -gt (count $winids)
+            return 1
+        end
+        set target $winids[$choice]
+    end
+
+    # Attach the standalone session directly. No grouping, no new session, so
+    # nothing here can disturb any other terminal.
+    if not set -q TMUX
+        tmux -S $_xfish_tmux_socket attach-session -t "=$target"
+    else if string match -q "$_xfish_tmux_socket,*" -- $TMUX
+        # Same server, so hop the current client over instead of nesting
+        tmux -S $_xfish_tmux_socket switch-client -t "=$target"
+    else
+        _xfish.echo.red "Already inside a tmux on another socket."
+        _xfish.echo "Detach first, or run: tmux -S $_xfish_tmux_socket attach -t $target"
+        return 1
     end
 end
 
 # Shortcuts
 alias cc.init='claudecode.init'
 alias cc.new='claudecode.new'
+alias cc.attach='claudecode.attach'
 
 # --- modules/xdocker.fish ---
 function _xdocker_get_projects
