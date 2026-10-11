@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.77
+# xFish Lite v3.78
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://github.com/Memphizzz/xFish-Lite
@@ -20,7 +20,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.77
+set -g XFISH_LITE_VERSION 3.78
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -200,7 +200,7 @@ function _xfish.confirm -a question
 	_xfish.echo.yellow $question
 	read -p "set_color red; echo -n \"Do you want to continue? [y/N] \"; set_color normal" _xfish_continue
 
-	if test $_xfish_continue = 'Y' -o $_xfish_continue = 'y' -o $_xfish_continue = 'yes' -o $_xfish_continue = 'YES'
+	if contains -- "$_xfish_continue" Y y yes YES
 		return 0
 	else
 		return 1
@@ -221,7 +221,7 @@ function _xfish.ask -a question -a default
 		# Yes/no mode (original behavior)
 		read -p "set_color yellow; echo -n \"$_xfish_prefix $question [y/N] \"; set_color normal" _xfish_continue
 
-		if test $_xfish_continue = 'Y' -o $_xfish_continue = 'y' -o $_xfish_continue = 'yes' -o $_xfish_continue = 'YES'
+		if contains -- "$_xfish_continue" Y y yes YES
 			return 0
 		else
 			return 1
@@ -232,7 +232,7 @@ end
 function _xfish.ask.output
 	read -p "set_color yellow; echo -n \"$_xfish_prefix Show error log? [y/N] \"; set_color normal" _xfish_continue
 
-	if test $_xfish_continue = 'Y' -o $_xfish_continue = 'y' -o $_xfish_continue = 'yes' -o $_xfish_continue = 'YES'
+	if contains -- "$_xfish_continue" Y y yes YES
 		cat $_xfish_output
 		return 0
 	else
@@ -356,8 +356,10 @@ function _xfish.aliases.load
 
 	#MacOSX sed and fd
 	if IsMacOSX
-		_xfish.init.echo '' "Replacing sed with gsed.."
-		alias sed='gsed'
+		if type -q gsed
+			_xfish.init.echo '' "Found gsed, replacing sed.."
+			alias sed='gsed'
+		end
 
 		if type -q fd
 			_xfish.init.echo '' "Found fd, replacing find.."
@@ -394,6 +396,8 @@ function xfish.installers.brewbasics
 	set tmp $tmp curlie aria2 fd zoxide yt-dlp
 	set tmp $tmp lolcat figlet dust fzf jq
 	set tmp $tmp git-delta hyperfine sd doggo glow bandwhich speedtest-cli
+	# GNU sed backs the 'sed' alias on macOS (BSD sed lacks GNU flags like -i without a suffix)
+	IsMacOSX; and set tmp $tmp gnu-sed
 
 	# apt package names to remove (same as tmp, plus apt-specific names)
 	set apt_conflicts $tmp fd-find
@@ -500,7 +504,7 @@ function xfish.installers.claude-config
 	_xfish.echo ""
 	_xfish.echo "This will:"
 	_xfish.echo "  - Clone claude-config repo (if not present)"
-	_xfish.echo "  - Symlink CLAUDE.md, skills/, and helper scripts"
+	_xfish.echo "  - Symlink CLAUDE.md, skills/, scripts/ and the statusline script"
 	_xfish.echo ""
 
 	if not _xfish.ask "Continue with installation?"
@@ -526,7 +530,7 @@ function xfish.installers.claude-config
 	# Create symlinks
 	_xfish.echo.blue "Creating symlinks..."
 
-	for item in CLAUDE.md skills statusline-command.sh
+	for item in CLAUDE.md skills scripts statusline-command.sh
 		set -l src $repo_path/$item
 		set -l dst $claude_dir/$item
 
@@ -705,33 +709,66 @@ function _cc_select -a target
         return 0
     end
 
-    # Prompt for projects directory if not configured
-    if not set -q _xfish_devtemp; or not test -d "$_xfish_devtemp"
+    # Project folders: $_xfish_devtemp is a list. Prompt for the first one only if
+    # none of them exists; add more with 'set -U _xfish_devtemp ... <dir>'.
+    set -l roots
+    for r in $_xfish_devtemp
+        test -d "$r"; and set -a roots (path resolve $r)
+    end
+    if test (count $roots) -eq 0
         read -P (set_color yellow)"[xFish] Enter projects directory: "(set_color normal) devtemp_path
-        test -n "$devtemp_path" -a -d "$devtemp_path"; and set -Ux _xfish_devtemp $devtemp_path
+        # read doesn't expand ~
+        set devtemp_path (string replace -r '^~' $HOME -- $devtemp_path)
+        if test -n "$devtemp_path" -a -d "$devtemp_path"
+            set -Ux _xfish_devtemp (path resolve $devtemp_path)
+            set roots $_xfish_devtemp
+        else
+            _xfish.echo.red "Not a directory: '$devtemp_path', only showing favorites"
+        end
     end
 
+    # labels: what the picker shows; names: the folder name, used for the tmux
+    # window and terminal title
+    set -l labels
     set -l names
     set -l paths
 
     # Static favorites
+    set -a labels "xFish"
     set -a names "xFish"
     set -a paths "$_xfish_base"
 
     if test -n "$_xfish_base_local"; and test -d "$_xfish_base_local"
+        set -a labels "xFish-local"
         set -a names "xFish-local"
         set -a paths "$_xfish_base_local"
     end
 
-    # Dynamic projects from DevTemp (all folders, sorted by modification time)
-    if test -d "$_xfish_devtemp"
-        for d in (find "$_xfish_devtemp" -maxdepth 1 -mindepth 1 -type d ! -name '*.worktrees' -printf '%T@ %p\n' | sort -rn | cut -d' ' -f2-)
-            set -a names (basename $d)
-            set -a paths $d
+    # Every folder directly inside each project folder, newest first across all
+    # of them. A project folder that sits inside another one (e.g. ~/Developer/
+    # Personal in ~/Developer) is only listed for its contents, not as an entry
+    # itself. Entries from the first folder show their plain name, the others are
+    # prefixed with their parent ('Personal/xPing') to tell them apart.
+    # path mtime instead of 'find -printf', which is GNU-only (and 'find' is
+    # aliased to fd on macOS)
+    for d in (for root in $roots
+            for dir in $root/*/
+                set dir (string trim -r -c / -- $dir)
+                string match -q '*.worktrees' -- $dir; and continue
+                contains -- (path resolve $dir) $roots; and continue
+                echo (path mtime $dir) $dir
+            end
+        end | sort -rn | cut -d' ' -f2-)
+        if test (path dirname $d) = "$roots[1]"
+            set -a labels (path basename $d)
+        else
+            set -a labels (path basename (path dirname $d))/(path basename $d)
         end
+        set -a names (path basename $d)
+        set -a paths $d
     end
 
-    if test (count $names) -eq 0
+    if test (count $labels) -eq 0
         _xfish.echo.red "No projects found"
         return 1
     end
@@ -739,7 +776,7 @@ function _cc_select -a target
     if type -q fzf
         # Calculate width based on longest name + padding for border/pointer
         set -l max_len 0
-        for n in $names
+        for n in $labels
             set -l len (string length "$n")
             if test $len -gt $max_len
                 set max_len $len
@@ -748,7 +785,7 @@ function _cc_select -a target
         set -l width (math $max_len + 6)
 
         # Step 1: Select project
-        set -l selected (printf '%s\n' $names | fzf \
+        set -l selected (printf '%s\n' $labels | fzf \
             --tmux=center,$width,50% \
             --no-input \
             --no-sort \
@@ -761,8 +798,8 @@ function _cc_select -a target
             --no-scrollbar)
 
         if test -n "$selected"
-            set -l idx (contains -i $selected $names)
-            set -g _cc_selected_name $selected
+            set -l idx (contains -i -- $selected $labels)
+            set -g _cc_selected_name $names[$idx]
             set -g _cc_selected_path $paths[$idx]
 
             # Step 2: Select mode
@@ -773,13 +810,13 @@ function _cc_select -a target
         end
     else
         _xfish.echo.yellow "Select project for Claude Code:"
-        for i in (seq (count $names))
-            echo "  $i) $names[$i]"
+        for i in (seq (count $labels))
+            echo "  $i) $labels[$i]"
         end
         echo ""
-        read -P "Choice [1-"(count $names)"]: " choice
+        read -P "Choice [1-"(count $labels)"]: " choice
 
-        if test -n "$choice"; and test "$choice" -ge 1; and test "$choice" -le (count $names)
+        if test -n "$choice"; and test "$choice" -ge 1; and test "$choice" -le (count $labels)
             set -g _cc_selected_name $names[$choice]
             set -g _cc_selected_path $paths[$choice]
         end
@@ -788,24 +825,86 @@ function _cc_select -a target
     test -n "$_cc_selected_name"
 end
 
-# Config: positions for new Claude windows
+# Config (WSL): Windows Terminal positions for new Claude windows
 # Your setup: left=-1152,0  center=0,0  right=5000,0
 set -g _xfish_cc_pos_left "-1152,0"
 set -g _xfish_cc_pos_right "5000,0"
 set -g _xfish_cc_window_size "142,36"
 set -g _xfish_cc_window_pos "4180,280"
 
-# Open in new Windows Terminal window.
-# The mode is handed to the new shell through the pending file, where
-# 'init.tmux' acts on it. It only picks the Windows Terminal geometry:
-# left/right are fullscreen per monitor, windowed and bare are small. All but
-# bare host Claude the same way, in its own window in the $_xfish_cc_master
-# session group; bare skips tmux entirely and dies with the terminal.
-function claudecode.new -a target
-    if _cc_select $target
+# Config (macOS): Moom hotkeys that place the new Ghostty window per mode.
+# Format: modifiers (control/option/command/shift) followed by a character key.
+# Hotkeys rather than Moom's AppleScript 'run', because 'run' opens Moom's
+# settings window and applies the action to it.
+set -g _xfish_cc_moom_left control option command l
+set -g _xfish_cc_moom_right control option command r
+set -g _xfish_cc_moom_window control option command c
+
+# Opens a window in the running Ghostty and has Moom place it. The window runs
+# Ghostty's configured command, so init picks up the pending file as on WSL.
+# Ghostty's AppleScript can't position windows, hence Moom.
+function _cc_launch_ghostty -a mode
+    set -l hotkey $_xfish_cc_moom_window
+    switch "$mode"
+        case left
+            set hotkey $_xfish_cc_moom_left
+        case right
+            set hotkey $_xfish_cc_moom_right
+    end
+
+    set -l press "keystroke \"$hotkey[-1]\""
+    if test (count $hotkey) -gt 1
+        set press "$press using {"(string join ', ' (string replace -r '$' ' down' -- $hotkey[1..-2]))"}"
+    end
+
+    # Ghostty's own 'frontmost' is unreliable, so readiness is checked via
+    # System Events; the hotkey must only fire once the new window has focus,
+    # or Moom moves whatever window is in front instead.
+    set -l result (osascript 2>&1 -e '
+tell application "Ghostty"
+	set w to new window
+	set wid to id of w
+	activate window w
+end tell
+repeat 40 times
+	tell application "System Events" to set fp to name of first process whose frontmost is true
+	tell application "Ghostty" to set fw to id of front window
+	if fp is "ghostty" and fw is wid then
+		tell application "System Events" to '$press'
+		return "placed"
+	end if
+	delay 0.05
+end repeat
+return "unplaced"')
+
+    switch "$result"
+        case placed
+            return 0
+        case unplaced
+            _xfish.echo.yellow "Window opened but never got focus, so Moom couldn't place it."
+            return 0
+        case '*'
+            _xfish.echo.red "Failed to open Ghostty window: $result"
+            return 1
+    end
+end
+
+# Opens a new terminal window for a Claude: Windows Terminal on WSL, Ghostty on
+# macOS, placed according to the mode. Everything else is handed to the new
+# shell through the pending file, where 'init.tmux' acts on it: without a
+# session it starts a new Claude, with one it reattaches that session.
+function _cc_open_window -a name path mode session
+    if not IsWSL; and not IsMacOSX
+        throw_new_NotImplementedException
+        return 1
+    end
+
+    printf '%s\n%s\n%s\n%s\n' "$name" "$path" "$mode" "$session" > $_xfish_cc_pending
+
+    if IsWSL
         set -l wt_args -w new
 
-        switch "$_cc_selected_mode"
+        switch "$mode"
             case left
                 set -a wt_args --pos $_xfish_cc_pos_left -F
             case right
@@ -814,8 +913,20 @@ function claudecode.new -a target
                 set -a wt_args --pos $_xfish_cc_window_pos --size $_xfish_cc_window_size
         end
 
-        printf '%s\n%s\n%s\n' "$_cc_selected_name" "$_cc_selected_path" "$_cc_selected_mode" > $_xfish_cc_pending
         wt.exe $wt_args
+    else if not _cc_launch_ghostty $mode
+        # Nothing will consume the hand-off, and a stale one would hijack
+        # the next shell that starts
+        rm -f $_xfish_cc_pending
+        return 1
+    end
+end
+
+# Open Claude in a new terminal window. All modes but bare host Claude in their
+# own standalone tmux session; bare skips tmux entirely and dies with the terminal.
+function claudecode.new -a target
+    if _cc_select $target
+        _cc_open_window $_cc_selected_name $_cc_selected_path $_cc_selected_mode; or return 1
         _xfish.echo.green "Launching $_cc_selected_name ($_cc_selected_mode).."
     end
 end
@@ -841,10 +952,19 @@ end
 
 # Reattach to a Claude. Each one is a standalone '$_xfish_cc_master_*' session
 # that outlives the terminal it was started from, so this is how you get back
-# after a terminal (or the whole server) dies.
+# after a terminal (or the whole terminal app) is closed. Opens it in a new
+# window placed the way it was started (the session's '@cc_mode'); sessions from
+# before that was recorded get the Mode picker. With --here it attaches in the
+# current terminal instead.
 function claudecode.attach
-    set -l fmt (printf '#{session_name}\t#{session_created}\t#{session_attached}\t#{pane_current_path}\t#{window_name}')
+    set -l here 0
+    contains -- --here $argv; and set here 1
+
+    set -l fmt (printf '#{session_name}\t#{session_created}\t#{session_attached}\t#{pane_current_path}\t#{window_name}\t#{@cc_mode}')
     set -l winids
+    set -l names
+    set -l paths
+    set -l modes
     set -l labels
 
     for line in (tmux -S $_xfish_tmux_socket list-sessions -F $fmt 2>/dev/null)
@@ -853,8 +973,12 @@ function claudecode.attach
 
         set -l suffix ""
         test "$parts[3]" != "0"; and set suffix " (attached)"
+        set -l name (string replace 'CC: ' '' -- $parts[5])
         set -a winids $parts[1]
-        set -a labels (printf '%-24s %-10s %s%s' (string replace 'CC: ' '' -- $parts[5]) (_cc_age $parts[2]) $parts[4] $suffix)
+        set -a names $name
+        set -a paths $parts[4]
+        set -a modes "$parts[6]"
+        set -a labels (printf '%-24s %-10s %-9s %s%s' $name (_cc_age $parts[2]) (test -n "$parts[6]"; and echo $parts[6]; or echo '?') $parts[4] $suffix)
     end
 
     if test (count $winids) -eq 0
@@ -884,7 +1008,7 @@ function claudecode.attach
             --no-scrollbar)
 
         test -n "$picked"; or return 1
-        set target $winids[(contains -i $picked $labels)]
+        set target (contains -i -- $picked $labels)
     else
         _xfish.echo.yellow "Live Claude sessions:"
         for i in (seq (count $labels))
@@ -896,8 +1020,23 @@ function claudecode.attach
         if test -z "$choice"; or not test "$choice" -ge 1 2>/dev/null; or test "$choice" -gt (count $winids)
             return 1
         end
-        set target $winids[$choice]
+        set target $choice
     end
+
+    if test $here -eq 0; and begin; IsWSL; or IsMacOSX; end
+        set -l mode $modes[$target]
+        if test -z "$mode"
+            # Started before the mode was recorded
+            set -g _cc_selected_mode windowed
+            _cc_select_mode; or return 1
+            set mode $_cc_selected_mode
+        end
+        _cc_open_window $names[$target] $paths[$target] $mode $winids[$target]; or return 1
+        _xfish.echo.green "Reattaching $names[$target] ($mode).."
+        return 0
+    end
+
+    set target $winids[$target]
 
     # Attach the standalone session directly. No grouping, no new session, so
     # nothing here can disturb any other terminal.
