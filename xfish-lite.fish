@@ -1,5 +1,5 @@
 #
-# xFish Lite v3.79
+# xFish Lite v3.80
 #
 # Minimal xFish for Docker containers and lightweight environments
 # https://github.com/Memphizzz/xFish-Lite
@@ -20,7 +20,7 @@
 # Generated from xFish - do not edit manually
 #
 
-set -g XFISH_LITE_VERSION 3.79
+set -g XFISH_LITE_VERSION 3.80
 
 # Platform detection
 set -g _xfish_isLinux 0
@@ -649,11 +649,173 @@ end
 # --- modules/claudecode.fish ---
 set -g _xfish_cc_pending ~/.xfish_cc_pending
 
-function _cc_open
-    set -l name $argv[1]
-    set -l path $argv[2]
+# Folder-name patterns inside the project folders that are not projects: git
+# worktree containers, and the per-session scratch folders of Claude itself
+set -g _xfish_cc_skip '*.worktrees' CC-tmp
+
+function _cc_open -a name path resume
     set -l session (tmux display -p '#{session_name}')
-    tmux new-window -n "CC: $name" -c "$path" -a -t "$session" "claude --enable-auto-mode"
+    set -l cmd "claude --enable-auto-mode"
+    test -n "$resume"; and set cmd "$cmd --resume $resume"
+    tmux new-window -n "CC: $name" -c "$path" -a -t "$session" "$cmd"
+end
+
+# Picker lists. Each loader fills its own globals with one entry per row: the
+# label fzf shows, the name used for the tmux window and terminal title, the
+# path, and whatever the row needs to launch (Claude session id, CC_* session).
+
+# Projects: xFish favorites, then every folder directly inside each of the
+# $_xfish_devtemp folders, newest first across all of them. A project folder
+# that sits inside another one (e.g. ~/Developer/Personal in ~/Developer) is
+# only listed for its contents, not as an entry itself. Entries from the first
+# folder show their plain name, the others are prefixed with their parent
+# ('Personal/xPing') to tell them apart.
+function _cc_load_projects
+    set -g _cc_proj_labels
+    set -g _cc_proj_names
+    set -g _cc_proj_paths
+
+    # $_xfish_devtemp is a list. Prompt for the first one only if none of them
+    # exists; add more with 'set -U _xfish_devtemp ... <dir>'.
+    set -l roots
+    for r in $_xfish_devtemp
+        test -d "$r"; and set -a roots (path resolve $r)
+    end
+    if test (count $roots) -eq 0
+        read -P (set_color yellow)"[xFish] Enter projects directory: "(set_color normal) devtemp_path
+        # read doesn't expand ~
+        set devtemp_path (string replace -r '^~' $HOME -- $devtemp_path)
+        if test -n "$devtemp_path" -a -d "$devtemp_path"
+            set -Ux _xfish_devtemp (path resolve $devtemp_path)
+            set roots $_xfish_devtemp
+        else
+            _xfish.echo.red "Not a directory: '$devtemp_path', only showing favorites"
+        end
+    end
+
+    set -a _cc_proj_labels "xFish"
+    set -a _cc_proj_names "xFish"
+    set -a _cc_proj_paths "$_xfish_base"
+    if test -n "$_xfish_base_local"; and test -d "$_xfish_base_local"
+        set -a _cc_proj_labels "xFish-local"
+        set -a _cc_proj_names "xFish-local"
+        set -a _cc_proj_paths "$_xfish_base_local"
+    end
+
+    # path mtime instead of 'find -printf', which is GNU-only (and 'find' is
+    # aliased to fd on macOS)
+    for d in (for root in $roots
+            for dir in $root/*/
+                set dir (string trim -r -c / -- $dir)
+                set -l skip 0
+                for pat in $_xfish_cc_skip
+                    string match -q -- $pat (path basename $dir); and set skip 1
+                end
+                test $skip -eq 1; and continue
+                contains -- (path resolve $dir) $roots; and continue
+                echo (path mtime $dir) $dir
+            end
+        end | sort -rn | cut -d' ' -f2-)
+        if test (path dirname $d) = "$roots[1]"
+            set -a _cc_proj_labels (path basename $d)
+        else
+            set -a _cc_proj_labels (path basename (path dirname $d))/(path basename $d)
+        end
+        set -a _cc_proj_names (path basename $d)
+        set -a _cc_proj_paths $d
+    end
+end
+
+# Running: every live '$_xfish_cc_master_*' session. Each is a standalone tmux
+# session that outlives the terminal it was started from, so this is how you get
+# back after a terminal (or the whole terminal app) is closed. '@cc_mode' is the
+# placement it was started with; empty for sessions from before that was recorded.
+function _cc_load_running
+    set -g _cc_run_labels
+    set -g _cc_run_names
+    set -g _cc_run_paths
+    set -g _cc_run_tmux
+    set -g _cc_run_modes
+
+    # The Claude session title for each CC_* session, so three windows in one
+    # project read as what they're about rather than three times the folder name.
+    # Claude runs under the pane's shell; a few parents up from its pid is plenty.
+    set -l pane_sessions
+    set -l pane_pids
+    for line in (tmux -S $_xfish_tmux_socket list-panes -a -F '#{session_name} #{pane_pid}' 2>/dev/null)
+        set -l f (string split ' ' -- $line)
+        string match -q "$_xfish_cc_master"'_*' -- $f[1]; or continue
+        set -a pane_sessions $f[1]
+        set -a pane_pids $f[2]
+    end
+    set -l titled_sessions
+    set -l titles
+    set -l finder ~/.claude/scripts/session-find.py
+    if test -f $finder
+        # sessionId, last activity epoch, running pid, cwd, title
+        for line in (python3 $finder list --tsv --running-only --limit 50 2>/dev/null)
+            set -l f (string split \t -- $line)
+            test -n "$f[5]"; or continue
+            set -l p $f[3]
+            for i in 1 2 3
+                test -n "$p" -a "$p" != 1; or break
+                if set -l idx (contains -i -- $p $pane_pids)
+                    set -a titled_sessions $pane_sessions[$idx]
+                    set -a titles $f[5]
+                    break
+                end
+                set p (ps -o ppid= -p $p 2>/dev/null | string trim)
+            end
+        end
+    end
+
+    set -l fmt (printf '#{session_name}\t#{session_created}\t#{session_attached}\t#{pane_current_path}\t#{window_name}\t#{@cc_mode}')
+    for line in (tmux -S $_xfish_tmux_socket list-sessions -F $fmt 2>/dev/null)
+        set -l f (string split \t -- $line)
+        string match -q "$_xfish_cc_master"'_*' -- $f[1]; or continue
+
+        set -l name (string replace 'CC: ' '' -- $f[5])
+        if set -l t (contains -i -- $f[1] $titled_sessions)
+            set name $titles[$t]
+        end
+        set -l suffix ""
+        test "$f[3]" != "0"; and set suffix " (attached)"
+        set -l mode (test -n "$f[6]"; and echo $f[6]; or echo '?')
+        set -a _cc_run_labels (printf '● %-28s %-9s %-9s %s%s' (string shorten -m 28 -- $name) (_cc_age $f[2]) $mode (string replace -r "^$HOME" '~' -- $f[4]) $suffix)
+        set -a _cc_run_names $name
+        set -a _cc_run_paths $f[4]
+        set -a _cc_run_tmux $f[1]
+        set -a _cc_run_modes "$f[6]"
+    end
+end
+
+# Sessions: recent Claude sessions to resume, in projects or anywhere else (e.g.
+# /tmp), minus running ones: the Running view has those. Uses session-find.py
+# from xclaude-config, so transcripts are parsed in one place.
+function _cc_load_sessions
+    set -g _cc_sess_labels
+    set -g _cc_sess_names
+    set -g _cc_sess_paths
+    set -g _cc_sess_ids
+
+    set -l finder ~/.claude/scripts/session-find.py
+    test -f $finder; or return 1
+
+    # sessionId, last activity epoch, running pid, cwd, title
+    for line in (python3 $finder list --tsv --limit 30 2>/dev/null)
+        set -l f (string split \t -- $line)
+        test -z "$f[3]"; or continue
+        test -d "$f[4]"; or continue
+
+        set -l title $f[5]
+        test -n "$title"; or set title (path basename $f[4])
+        set -l when (test -n "$f[2]"; and _cc_age $f[2]; or echo "?")
+
+        set -a _cc_sess_labels (printf '↻ %-28s %-34s %s' (string shorten -m 28 -- $title) (string replace -r "^$HOME" '~' -- $f[4]) $when)
+        set -a _cc_sess_names (string shorten -m 30 -- $title)
+        set -a _cc_sess_paths $f[4]
+        set -a _cc_sess_ids $f[1]
+    end
 end
 
 # Geometry picker. Without fzf the default from _cc_select stands.
@@ -684,145 +846,170 @@ function _cc_select_mode
     end
 end
 
-# _cc_select [path] - with a path, skips the project picker and uses that
-# directory directly; the geometry picker still runs.
-function _cc_select -a target
-    # Returns: sets _cc_selected_name, _cc_selected_path, _cc_selected_mode
+# _cc_pick <view> [mode] - one fzf picker over three views: Projects (start a new
+# Claude), Running (reattach a live CC_* session) and Sessions (resume a past
+# one). Tab / Shift+Tab cycle through them; each loads on its first visit, so
+# opening on Projects stays as fast as before. With 'mode' set, picks that open a
+# window also get the Mode picker. Sets _cc_selected_{name,path,mode,resume,tmux};
+# returns 1 when cancelled.
+function _cc_pick -a view need_mode
     set -g _cc_selected_name
     set -g _cc_selected_path
-    set -g _cc_selected_mode "left"
+    set -g _cc_selected_mode left
+    set -g _cc_selected_resume
+    set -g _cc_selected_tmux
 
-    if test -n "$target"
-        if not test -d "$target"
-            _xfish.echo.red "Not a directory: $target"
-            return 1
+    set -l views projects running sessions
+    set -l titles Projects Running Sessions
+    set -l loaded
+
+    while true
+        if not contains -- $view $loaded
+            switch $view
+                case projects
+                    _cc_load_projects
+                case running
+                    _cc_load_running
+                case sessions
+                    _cc_load_sessions
+            end
+            set -a loaded $view
         end
 
-        # Absolute, because the launched shell starts elsewhere
-        set -g _cc_selected_path (path resolve "$target")
-        set -g _cc_selected_name (path basename $_cc_selected_path)
+        set -l items
+        switch $view
+            case projects
+                set items $_cc_proj_labels
+            case running
+                set items $_cc_run_labels
+            case sessions
+                set items $_cc_sess_labels
+        end
 
+        # Rows are picked by position, not text: two Claudes in one project can
+        # carry the same label
+        set -l idx
+        if not type -q fzf
+            # No view switching without fzf: a numbered list of this view only
+            if test (count $items) -eq 0
+                _xfish.echo.yellow "Nothing to pick."
+                return 1
+            end
+            _xfish.echo.yellow "Select for Claude Code:"
+            for i in (seq (count $items))
+                echo "  $i) $items[$i]"
+            end
+            read -P "Choice [1-"(count $items)"]: " choice
+            if test -z "$choice"; or not test "$choice" -ge 1 2>/dev/null; or test "$choice" -gt (count $items)
+                return 1
+            end
+            set idx $choice
+        else
+            # Index 0 is the placeholder for an empty view
+            set -l rows
+            for i in (seq (count $items))
+                set -a rows "$i"\t"$items[$i]"
+            end
+            test (count $rows) -gt 0; or set rows "0"\t"(nothing here · Tab for the next view)"
+
+            # Title marks the current view: ' [Projects] · Running · Sessions · ⇥ '
+            set -l marks
+            for i in (seq (count $views))
+                test $views[$i] = $view; and set -a marks "[$titles[$i]]"; or set -a marks $titles[$i]
+            end
+            set -l title " "(string join ' · ' $marks)" · ⇥ "
+
+            # Width from the longest entry or title, plus border and pointer
+            set -l max_len (string length -- $title)
+            for n in $rows
+                set -l len (string length -- "$n")
+                test $len -gt $max_len; and set max_len $len
+            end
+
+            set -l out (printf '%s\n' $rows | fzf \
+                --expect=tab,btab \
+                --delimiter=\t \
+                --with-nth=2.. \
+                --tmux=center,(math $max_len + 6),50% \
+                --no-input \
+                --no-sort \
+                --reverse \
+                --border=rounded \
+                --border-label="$title" \
+                --pointer="▶" \
+                --color="border:yellow,label:yellow" \
+                --info=hidden \
+                --no-scrollbar)
+
+            # Escape: no output at all. Otherwise line 1 is the key, line 2 the pick.
+            test (count $out) -ge 2; or return 1
+            set -l current (contains -i -- $view $views)
+            switch $out[1]
+                case tab
+                    set view $views[(math $current % 3 + 1)]
+                    continue
+                case btab
+                    set view $views[(math "($current + 1) % 3 + 1")]
+                    continue
+            end
+            test -n "$out[2]"; or return 1
+            set idx (string split -m1 \t -- $out[2])[1]
+        end
+        test "$idx" -ge 1 2>/dev/null; or continue
+
+        switch $view
+            case projects
+                set -g _cc_selected_name $_cc_proj_names[$idx]
+                set -g _cc_selected_path $_cc_proj_paths[$idx]
+            case running
+                set -g _cc_selected_name $_cc_run_names[$idx]
+                set -g _cc_selected_path $_cc_run_paths[$idx]
+                set -g _cc_selected_tmux $_cc_run_tmux[$idx]
+                # Reattach the way it was placed; only sessions from before the
+                # mode was recorded need the Mode picker
+                set -g _cc_selected_mode $_cc_run_modes[$idx]
+                if test -n "$need_mode" -a -z "$_cc_selected_mode"
+                    set -g _cc_selected_mode windowed
+                    _cc_select_mode; or return 1
+                end
+                return 0
+            case sessions
+                set -g _cc_selected_name $_cc_sess_names[$idx]
+                set -g _cc_selected_path $_cc_sess_paths[$idx]
+                set -g _cc_selected_resume $_cc_sess_ids[$idx]
+        end
+        break
+    end
+
+    if test -n "$need_mode"
         if not _cc_select_mode
             set -g _cc_selected_name
             return 1
         end
-        return 0
+    end
+end
+
+# _cc_select [path] [mode] - with a path, skips the picker and uses that directory
+# directly (resolved to an absolute path, since the launched shell starts
+# elsewhere); otherwise opens the picker on Projects. 'mode' as in _cc_pick.
+function _cc_select -a target need_mode
+    if test -z "$target"
+        _cc_pick projects $need_mode
+        return $status
     end
 
-    # Project folders: $_xfish_devtemp is a list. Prompt for the first one only if
-    # none of them exists; add more with 'set -U _xfish_devtemp ... <dir>'.
-    set -l roots
-    for r in $_xfish_devtemp
-        test -d "$r"; and set -a roots (path resolve $r)
-    end
-    if test (count $roots) -eq 0
-        read -P (set_color yellow)"[xFish] Enter projects directory: "(set_color normal) devtemp_path
-        # read doesn't expand ~
-        set devtemp_path (string replace -r '^~' $HOME -- $devtemp_path)
-        if test -n "$devtemp_path" -a -d "$devtemp_path"
-            set -Ux _xfish_devtemp (path resolve $devtemp_path)
-            set roots $_xfish_devtemp
-        else
-            _xfish.echo.red "Not a directory: '$devtemp_path', only showing favorites"
-        end
-    end
-
-    # labels: what the picker shows; names: the folder name, used for the tmux
-    # window and terminal title
-    set -l labels
-    set -l names
-    set -l paths
-
-    # Static favorites
-    set -a labels "xFish"
-    set -a names "xFish"
-    set -a paths "$_xfish_base"
-
-    if test -n "$_xfish_base_local"; and test -d "$_xfish_base_local"
-        set -a labels "xFish-local"
-        set -a names "xFish-local"
-        set -a paths "$_xfish_base_local"
-    end
-
-    # Every folder directly inside each project folder, newest first across all
-    # of them. A project folder that sits inside another one (e.g. ~/Developer/
-    # Personal in ~/Developer) is only listed for its contents, not as an entry
-    # itself. Entries from the first folder show their plain name, the others are
-    # prefixed with their parent ('Personal/xPing') to tell them apart.
-    # path mtime instead of 'find -printf', which is GNU-only (and 'find' is
-    # aliased to fd on macOS)
-    for d in (for root in $roots
-            for dir in $root/*/
-                set dir (string trim -r -c / -- $dir)
-                string match -q '*.worktrees' -- $dir; and continue
-                contains -- (path resolve $dir) $roots; and continue
-                echo (path mtime $dir) $dir
-            end
-        end | sort -rn | cut -d' ' -f2-)
-        if test (path dirname $d) = "$roots[1]"
-            set -a labels (path basename $d)
-        else
-            set -a labels (path basename (path dirname $d))/(path basename $d)
-        end
-        set -a names (path basename $d)
-        set -a paths $d
-    end
-
-    if test (count $labels) -eq 0
-        _xfish.echo.red "No projects found"
+    set -g _cc_selected_mode left
+    set -g _cc_selected_resume
+    set -g _cc_selected_tmux
+    if not test -d "$target"
+        _xfish.echo.red "Not a directory: $target"
         return 1
     end
-
-    if type -q fzf
-        # Calculate width based on longest name + padding for border/pointer
-        set -l max_len 0
-        for n in $labels
-            set -l len (string length "$n")
-            if test $len -gt $max_len
-                set max_len $len
-            end
-        end
-        set -l width (math $max_len + 6)
-
-        # Step 1: Select project
-        set -l selected (printf '%s\n' $labels | fzf \
-            --tmux=center,$width,50% \
-            --no-input \
-            --no-sort \
-            --reverse \
-            --border=rounded \
-            --border-label=" Claude Code " \
-            --pointer="▶" \
-            --color="border:yellow,label:yellow" \
-            --info=hidden \
-            --no-scrollbar)
-
-        if test -n "$selected"
-            set -l idx (contains -i -- $selected $labels)
-            set -g _cc_selected_name $names[$idx]
-            set -g _cc_selected_path $paths[$idx]
-
-            # Step 2: Select mode
-            if not _cc_select_mode
-                set -g _cc_selected_name
-                return 1
-            end
-        end
-    else
-        _xfish.echo.yellow "Select project for Claude Code:"
-        for i in (seq (count $labels))
-            echo "  $i) $labels[$i]"
-        end
-        echo ""
-        read -P "Choice [1-"(count $labels)"]: " choice
-
-        if test -n "$choice"; and test "$choice" -ge 1; and test "$choice" -le (count $labels)
-            set -g _cc_selected_name $names[$choice]
-            set -g _cc_selected_path $paths[$choice]
-        end
+    set -g _cc_selected_path (path resolve "$target")
+    set -g _cc_selected_name (path basename $_cc_selected_path)
+    if test -n "$need_mode"
+        _cc_select_mode; or return 1
     end
-
-    test -n "$_cc_selected_name"
 end
 
 # Config (WSL): Windows Terminal positions for new Claude windows
@@ -891,15 +1078,16 @@ end
 
 # Opens a new terminal window for a Claude: Windows Terminal on WSL, Ghostty on
 # macOS, placed according to the mode. Everything else is handed to the new
-# shell through the pending file, where 'init.tmux' acts on it: without a
-# session it starts a new Claude, with one it reattaches that session.
-function _cc_open_window -a name path mode session
+# shell through the pending file, where 'init.tmux' acts on it: with a tmux
+# session it reattaches that session, otherwise it starts Claude, resuming the
+# Claude session id in 'resume' when given.
+function _cc_open_window -a name path mode session resume
     if not IsWSL; and not IsMacOSX
         throw_new_NotImplementedException
         return 1
     end
 
-    printf '%s\n%s\n%s\n%s\n' "$name" "$path" "$mode" "$session" > $_xfish_cc_pending
+    printf '%s\n%s\n%s\n%s\n%s\n' "$name" "$path" "$mode" "$session" "$resume" > $_xfish_cc_pending
 
     if IsWSL
         set -l wt_args -w new
@@ -922,19 +1110,47 @@ function _cc_open_window -a name path mode session
     end
 end
 
-# Open Claude in a new terminal window. All modes but bare host Claude in their
-# own standalone tmux session; bare skips tmux entirely and dies with the terminal.
-function claudecode.new -a target
-    if _cc_select $target
-        _cc_open_window $_cc_selected_name $_cc_selected_path $_cc_selected_mode; or return 1
+# Opens what was picked in a new terminal window: reattaches a running CC_*
+# session, or starts Claude, resuming a past session when one was picked. All
+# modes but bare host Claude in their own standalone tmux session; bare skips
+# tmux entirely and dies with the terminal.
+function _cc_launch
+    if test -n "$_cc_selected_tmux"
+        _cc_open_window $_cc_selected_name $_cc_selected_path $_cc_selected_mode $_cc_selected_tmux; or return 1
+        _xfish.echo.green "Reattaching $_cc_selected_name ($_cc_selected_mode).."
+        return 0
+    end
+
+    _cc_open_window $_cc_selected_name $_cc_selected_path $_cc_selected_mode "" "$_cc_selected_resume"; or return 1
+    if test -n "$_cc_selected_resume"
+        _xfish.echo.green "Resuming $_cc_selected_name ($_cc_selected_mode).."
+    else
         _xfish.echo.green "Launching $_cc_selected_name ($_cc_selected_mode).."
     end
 end
 
+# cc [path] - Claude Code launcher: a new Claude in a project, a running one to
+# reattach, or a past session to resume (Tab switches), each in a new placed
+# window. With a path it starts straight in that directory.
+function claudecode -a target
+    _cc_select "$target" mode; or return 1
+    _cc_launch
+end
+
+# cc.init [path] - the same picker, but into a new tmux window of the current session
 function claudecode.init -a target
-    if _cc_select $target
-        _cc_open $_cc_selected_name $_cc_selected_path
+    _cc_select "$target"; or return 1
+
+    if test -n "$_cc_selected_tmux"
+        # Already running in its own session: hop this client over to it
+        if string match -q "$_xfish_tmux_socket,*" -- "$TMUX"
+            tmux -S $_xfish_tmux_socket switch-client -t "=$_cc_selected_tmux"
+            return $status
+        end
+        _xfish.echo.yellow "'$_cc_selected_name' runs in $_cc_selected_tmux, use cc.attach to get to it."
+        return 1
     end
+    _cc_open $_cc_selected_name $_cc_selected_path "$_cc_selected_resume"
 end
 
 function _cc_age -a epoch
@@ -950,93 +1166,26 @@ function _cc_age -a epoch
     end
 end
 
-# Reattach to a Claude. Each one is a standalone '$_xfish_cc_master_*' session
-# that outlives the terminal it was started from, so this is how you get back
-# after a terminal (or the whole terminal app) is closed. Opens it in a new
-# window placed the way it was started (the session's '@cc_mode'); sessions from
-# before that was recorded get the Mode picker. With --here it attaches in the
-# current terminal instead.
+# cc.attach [--here] - the picker opened on Running. The pick opens in a new
+# window placed by its recorded mode; with --here (and on platforms without
+# window support) a running session attaches in the current terminal instead.
 function claudecode.attach
     set -l here 0
     contains -- --here $argv; and set here 1
+    begin; IsWSL; or IsMacOSX; end; or set here 1
 
-    set -l fmt (printf '#{session_name}\t#{session_created}\t#{session_attached}\t#{pane_current_path}\t#{window_name}\t#{@cc_mode}')
-    set -l winids
-    set -l names
-    set -l paths
-    set -l modes
-    set -l labels
-
-    for line in (tmux -S $_xfish_tmux_socket list-sessions -F $fmt 2>/dev/null)
-        set -l parts (string split \t -- $line)
-        string match -q "$_xfish_cc_master"'_*' -- $parts[1]; or continue
-
-        set -l suffix ""
-        test "$parts[3]" != "0"; and set suffix " (attached)"
-        set -l name (string replace 'CC: ' '' -- $parts[5])
-        set -a winids $parts[1]
-        set -a names $name
-        set -a paths $parts[4]
-        set -a modes "$parts[6]"
-        set -a labels (printf '%-24s %-10s %-9s %s%s' $name (_cc_age $parts[2]) (test -n "$parts[6]"; and echo $parts[6]; or echo '?') $parts[4] $suffix)
+    if test $here -eq 0
+        _cc_pick running mode; or return 1
+        _cc_launch
+        return
     end
 
-    if test (count $winids) -eq 0
-        _xfish.echo.yellow "No live Claude sessions."
+    _cc_pick running; or return 1
+    if test -z "$_cc_selected_tmux"
+        _xfish.echo.yellow "--here only attaches running sessions."
         return 1
     end
-
-    set -l target
-
-    if type -q fzf
-        set -l max_len 0
-        for l in $labels
-            set -l len (string length -- $l)
-            test $len -gt $max_len; and set max_len $len
-        end
-
-        set -l picked (printf '%s\n' $labels | fzf \
-            --tmux=center,(math $max_len + 6),50% \
-            --no-input \
-            --no-sort \
-            --reverse \
-            --border=rounded \
-            --border-label=" Claude Sessions " \
-            --pointer="▶" \
-            --color="border:yellow,label:yellow" \
-            --info=hidden \
-            --no-scrollbar)
-
-        test -n "$picked"; or return 1
-        set target (contains -i -- $picked $labels)
-    else
-        _xfish.echo.yellow "Live Claude sessions:"
-        for i in (seq (count $labels))
-            echo "  $i) $labels[$i]"
-        end
-        echo ""
-        read -P "Choice [1-"(count $labels)"]: " choice
-
-        if test -z "$choice"; or not test "$choice" -ge 1 2>/dev/null; or test "$choice" -gt (count $winids)
-            return 1
-        end
-        set target $choice
-    end
-
-    if test $here -eq 0; and begin; IsWSL; or IsMacOSX; end
-        set -l mode $modes[$target]
-        if test -z "$mode"
-            # Started before the mode was recorded
-            set -g _cc_selected_mode windowed
-            _cc_select_mode; or return 1
-            set mode $_cc_selected_mode
-        end
-        _cc_open_window $names[$target] $paths[$target] $mode $winids[$target]; or return 1
-        _xfish.echo.green "Reattaching $names[$target] ($mode).."
-        return 0
-    end
-
-    set target $winids[$target]
+    set -l target $_cc_selected_tmux
 
     # Attach the standalone session directly. No grouping, no new session, so
     # nothing here can disturb any other terminal.
@@ -1052,9 +1201,11 @@ function claudecode.attach
     end
 end
 
-# Shortcuts
+# Shortcuts. 'cc' shadows the C compiler's name in interactive fish only; builds
+# run /usr/bin/cc through PATH and never see fish functions.
+alias cc='claudecode'
+alias cc.new='claudecode'
 alias cc.init='claudecode.init'
-alias cc.new='claudecode.new'
 alias cc.attach='claudecode.attach'
 
 # --- modules/xdocker.fish ---
